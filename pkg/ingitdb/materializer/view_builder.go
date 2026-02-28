@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/ingitdb/ingitdb-cli/pkg/ingitdb"
@@ -64,6 +65,7 @@ func (b SimpleViewBuilder) BuildViews(
 		}
 
 		records = filterColumns(records, view.Columns)
+		sortRecordsByOrderBy(records, view.OrderBy)
 		if view.Top > 0 && len(records) > view.Top {
 			records = records[:view.Top]
 		}
@@ -123,6 +125,7 @@ func (b SimpleViewBuilder) BuildView(
 	}
 
 	records = filterColumns(records, view.Columns)
+	sortRecordsByOrderBy(records, view.OrderBy)
 	if view.Top > 0 && len(records) > view.Top {
 		records = records[:view.Top]
 	}
@@ -319,4 +322,127 @@ func displayRelPath(repoRoot, outPath string) string {
 		}
 	}
 	return outPath
+}
+
+// sortRecordsByOrderBy sorts records in-place according to the orderBy expression.
+// Format: "<field> [asc|desc]" (case-insensitive; default is ascending).
+// No-op when orderBy is empty.
+func sortRecordsByOrderBy(records []ingitdb.RecordEntry, orderBy string) {
+	orderBy = strings.TrimSpace(orderBy)
+	if orderBy == "" {
+		return
+	}
+	parts := strings.Fields(orderBy)
+	field := parts[0]
+	desc := len(parts) >= 2 && strings.EqualFold(parts[1], "desc")
+
+	sort.SliceStable(records, func(i, j int) bool {
+		vi := recordFieldValue(records[i], field)
+		vj := recordFieldValue(records[j], field)
+		cmp := compareAny(vi, vj)
+		if desc {
+			return cmp > 0
+		}
+		return cmp < 0
+	})
+}
+
+// recordFieldValue returns the value of a field from a record's Data map, or nil if absent.
+func recordFieldValue(r ingitdb.RecordEntry, field string) any {
+	if r.Data == nil {
+		return nil
+	}
+	return r.Data[field]
+}
+
+// compareAny compares two values of arbitrary type.
+// Returns negative, zero, or positive for less-than, equal, greater-than.
+func compareAny(a, b any) int {
+	if a == nil && b == nil {
+		return 0
+	}
+	if a == nil {
+		return -1
+	}
+	if b == nil {
+		return 1
+	}
+	switch av := a.(type) {
+	case int:
+		if bv, ok := toComparableInt(b); ok {
+			return cmpInts(int64(av), bv)
+		}
+	case int64:
+		if bv, ok := toComparableInt(b); ok {
+			return cmpInts(av, bv)
+		}
+	case float64:
+		if bv, ok := toComparableFloat(b); ok {
+			return cmpFloats(av, bv)
+		}
+	case string:
+		if bv, ok := b.(string); ok {
+			if av < bv {
+				return -1
+			}
+			if av > bv {
+				return 1
+			}
+			return 0
+		}
+	}
+	// fallback: compare as formatted strings
+	as := fmt.Sprintf("%v", a)
+	bs := fmt.Sprintf("%v", b)
+	if as < bs {
+		return -1
+	}
+	if as > bs {
+		return 1
+	}
+	return 0
+}
+
+func toComparableInt(v any) (int64, bool) {
+	switch n := v.(type) {
+	case int:
+		return int64(n), true
+	case int64:
+		return n, true
+	case float64:
+		return int64(n), true
+	}
+	return 0, false
+}
+
+func toComparableFloat(v any) (float64, bool) {
+	switch n := v.(type) {
+	case float64:
+		return n, true
+	case int:
+		return float64(n), true
+	case int64:
+		return float64(n), true
+	}
+	return 0, false
+}
+
+func cmpInts(a, b int64) int {
+	if a < b {
+		return -1
+	}
+	if a > b {
+		return 1
+	}
+	return 0
+}
+
+func cmpFloats(a, b float64) int {
+	if a < b {
+		return -1
+	}
+	if a > b {
+		return 1
+	}
+	return 0
 }

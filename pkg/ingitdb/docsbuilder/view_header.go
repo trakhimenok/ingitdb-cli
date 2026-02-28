@@ -21,5 +21,9 @@ func BuildViewHeader(view *ingitdb.ViewDef) string {
 		fmt.Fprintf(&sb, " where %s", view.Where)
 	}
 
+	if view.OrderBy != "" {
+		fmt.Fprintf(&sb, " ordered by %s", view.OrderBy)
+	}
+
 	return sb.String()
 }

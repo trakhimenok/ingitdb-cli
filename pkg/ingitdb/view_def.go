@@ -6,8 +6,9 @@ import (
 )
 
 type ViewDef struct {
-	ID     string            `yaml:"-"`
-	Titles map[string]string `yaml:"titles,omitempty"`
+	ID      string            `yaml:"-"`
+	Titles  map[string]string `yaml:"titles,omitempty"`
+	OrderBy string            `yaml:"order_by,omitempty"`
 
 	// Formats TODO: Needs definition
 	Formats []string `yaml:"formats,omitempty"`

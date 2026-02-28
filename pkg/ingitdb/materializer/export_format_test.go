@@ -1299,11 +1299,11 @@ func TestFormatINGR_WithRecordsDelimiter(t *testing.T) {
 	if len(lines) < 10 {
 		t.Fatalf("expected at least 10 lines, got %d: %q", len(lines), string(got))
 	}
-	if lines[4] != "#" {
-		t.Errorf("expected delimiter '#' after record 1, got %q", lines[4])
+	if lines[4] != "#-" {
+		t.Errorf("expected delimiter '#-' after record 1, got %q", lines[4])
 	}
-	if lines[8] != "#" {
-		t.Errorf("expected delimiter '#' after record 2, got %q", lines[8])
+	if lines[8] != "#-" {
+		t.Errorf("expected delimiter '#-' after record 2, got %q", lines[8])
 	}
 }
 
