@@ -158,11 +158,11 @@ With record delimiter (see §3.6):
 "john"
 "John Doe"
 35
-#
+#-
 "jane"
 "Jane Smith"
 29
-#
+#-
 # 2 records
 ```
 
@@ -175,16 +175,97 @@ Parsed as:
 
 ### 3.6 Record Delimiter (Optional)
 
-Records may be separated by a **delimiter line** — a line containing only `#` with no other content.
+Records may be separated by a **delimiter line** — a line starting with `#-` followed by any number of additional `-`
+characters, with a total line length under 80 characters:
+
+```
+#-
+#---
+#-------------------------------------------------------------------------------
+```
 
 Rules:
 
 - The delimiter is **optional**. A file may use it or omit it entirely.
 - If used, a delimiter line **must appear after every record**, including the first. It cannot be used only between some records.
 - A delimiter line after the **last record** (before the record count line) is permitted.
+- The number of `-` characters is cosmetic; parsers must treat all valid delimiter lines as equivalent.
 - Parsers must accept both forms (with and without delimiter).
 
-### 3.7 Footer
+### 3.8 Commented-Out Value Lines
+
+Any field-value line may be commented out by prefixing the value directly with `#` (no space). The parser treats the
+line as if the field value were `null` for processing purposes, but the original value is preserved in the file.
+A `#` with nothing after it represents a commented-out `null`.
+
+```
+#"admin"     ← commented-out string
+#123         ← commented-out integer
+#true        ← commented-out boolean
+#false       ← commented-out boolean
+#            ← commented-out null
+```
+
+Example with two records where the second is fully commented out:
+
+```
+# INGR.io | people: $ID:string, name:string, age:int, role:string
+"alice"
+"Alice Smith"
+30
+"admin"
+#-
+#"bob"
+#"Bob Jones"
+#25
+#"viewer"
+#-
+# 2 records
+```
+
+**Type validation of commented-out values:**
+
+- The value following `#` **must** be a valid INGR value and, if the column has a declared type, must conform to that
+  type — exactly as if the line were uncommented.
+- Validators **must** report an error for any commented-out value that fails type or syntax validation.
+- Parsers may be configured either to skip invalid commented-out lines (lenient mode) or to raise an error (strict mode).
+
+**All-or-nothing per record:**
+
+All field lines of a record must either be fully commented out or fully uncommented. Partially commenting out a
+record (some lines commented, others not) is **not permitted** and must be reported as an error by both validators
+and parsers.
+
+Valid — entire record commented out:
+
+```
+# INGR.io | people: $ID:string, name:string, age:int
+#"alice"
+#"Alice Smith"
+#30
+```
+
+Invalid — partial comment:
+
+```
+# INGR.io | people: $ID:string, name:string, age:int
+#"alice"
+"Alice Smith"   ← error: record is only partially commented out
+30
+```
+
+**Use cases:**
+
+- **Temporarily disable a value during debugging** — set a field to its default/null without deleting the intended
+  value, making it trivial to restore with one character deletion.
+- **Mask sensitive fields for sharing** — comment out PII (e.g. email, phone) before sharing a snapshot, while keeping
+  the structure intact.
+- **Stage a value before it goes live** — author the intended value and comment it out until a deployment condition is
+  met; the change is already in Git history.
+- **Partial record exclusion in development** — comment out the `$ID` line of a record to exclude it from a dataset
+  without deleting it, useful when testing with a subset of data.
+
+### 3.9 Footer
 
 The footer starts immediately after the last record (or the last record's delimiter line). It consists of one **required** line followed by any number of **optional** comment lines:
 
@@ -234,7 +315,8 @@ The space after `#` is preserved but optional for parsers.
 7. First footer line must match `# {N} records` or `# 1 record`.
 8. All subsequent footer lines must start with `#`.
 9. No newline after the last line of the file.
-10. Record delimiter lines (`#`) are optional, but if used must appear after every record.
+10. Record delimiter lines are optional, but if used must appear after every record. A delimiter line must start with `#-` followed by any number of additional `-` characters (total length < 80).
+11. Commented-out value lines start with `#` immediately followed by the value (or nothing for a commented-out `null`). The commented value must be a valid INGR value and must conform to the column's declared type if present. All field lines of a record must be either fully commented out or fully uncommented — partial commenting is an error.
 
 ---
 
@@ -314,7 +396,45 @@ Not ideal for:
 
 - Line 1: `# INGR.io | {recordset_name}: $ID[:type], col2[:type], col3[:type], ...`
 - Lines 2…(end-N): `N` JSON-encoded values per record, one value per line
-- Optional: a bare `#` delimiter line after each record (all or none)
+- Optional: a `#-` delimiter line after each record (all or none)
 - First footer line: `# {N} records` (required, with `\n` unless last line)
 - Additional footer lines: optional `#`-prefixed lines (e.g. `# sha256:{hex}`)
 - Optimised for simplicity and Git friendliness
+
+---
+
+## 10. Proposals
+
+> ⚠️ The features described in this section are **not part of the INGR standard**. They are early-stage proposals under
+> consideration for a future version. Implementations must not rely on them until formally adopted.
+
+---
+
+### 10.1 Inline Comments on Value Lines
+
+Allow an optional `# comment` suffix on any value line, separated from the JSON value by whitespace:
+
+```
+true # Bob asked to set this to true
+"active" # set by migration script on 2024-03-01
+42 # calculated from legacy formula
+```
+
+Parsers supporting this proposal would strip everything from the first unquoted ` #` to the end of the line before
+parsing the JSON value.
+
+**Pros:**
+
+- Lets authors annotate individual field values without a separate file or commit message.
+- Useful for documenting why a specific value was set (audit trail in the data itself).
+- Familiar syntax — used in YAML, TOML, Python, and many shell formats.
+- Git-friendly: comment changes produce a clean single-line diff on the annotated field.
+
+**Cons:**
+
+- Breaks the current rule that each value line is a valid JSON expression verbatim; parsers must pre-process lines before
+  parsing.
+- `#` is a valid character inside JSON strings — parsers must correctly detect only unquoted, post-value `#` occurrences,
+  which adds non-trivial parsing complexity.
+- Increases line length, potentially hurting readability in wide-field files.
+- Comments are not roundtripped by most serialisers, so programmatic writes would silently drop them.
