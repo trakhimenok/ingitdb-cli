@@ -91,7 +91,7 @@ func (v *CollectionDef) Validate() error {
 
 	// Validate DefaultView if present
 	if v.DefaultView != nil {
-		v.DefaultView.ID = "default_view"
+		v.DefaultView.ID = DefaultViewID
 		if err := v.DefaultView.Validate(); err != nil {
 			allErrors = append(allErrors, fmt.Errorf("invalid default_view: %w", err))
 		}

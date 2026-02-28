@@ -212,8 +212,8 @@ func TestCollectionDefValidate_DefaultView(t *testing.T) {
 
 			// If no error, verify DefaultView.ID was set
 			if !tt.wantErr && tt.defaultView != nil {
-				if def.DefaultView.ID != "default_view" {
-					t.Fatalf("expected DefaultView.ID to be 'default_view', got %q", def.DefaultView.ID)
+				if def.DefaultView.ID != DefaultViewID {
+					t.Fatalf("expected DefaultView.ID to be %q, got %q", DefaultViewID, def.DefaultView.ID)
 				}
 			}
 		})

@@ -9,4 +9,4 @@ const SchemaDir = ".collection"
 const CollectionDefFileName = "definition.yaml"
 
 const IngitdbDir = "$ingitdb"
-const DefaultViewID = "default_view"
+const DefaultViewID = "$default_view"
