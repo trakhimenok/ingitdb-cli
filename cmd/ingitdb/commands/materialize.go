@@ -32,9 +32,9 @@ func Materialize(
 				Name:  "views",
 				Usage: "comma-separated list of views to materialize",
 			},
-			&cli.BoolFlag{
+			&cli.IntFlag{
 				Name:  "records-delimiter",
-				Usage: "write a '#' delimiter line after each record in INGR output",
+				Usage: "write a '#-' delimiter line after each record in INGR output; 0=default (enabled), 1=enabled, -1=disabled",
 			},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
@@ -69,9 +69,9 @@ func Materialize(
 			if err != nil {
 				return fmt.Errorf("failed to read database definition: %w", err)
 			}
-			var recordsDelimiter *bool
+			var recordsDelimiter *int
 			if cmd.IsSet("records-delimiter") {
-				v := cmd.Bool("records-delimiter")
+				v := cmd.Int("records-delimiter")
 				recordsDelimiter = &v
 			}
 			def.RuntimeOverrides.RecordsDelimiter = recordsDelimiter

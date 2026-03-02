@@ -232,11 +232,18 @@ func buildDefaultView(dbPath string, repoRoot string, col *ingitdb.CollectionDef
 		if view.IncludeHash {
 			exportOpts = append(exportOpts, WithHash())
 		}
-		recordsDelimiter := view.RecordsDelimiter || def.Settings.RecordsDelimiter
-		if def.RuntimeOverrides.RecordsDelimiter != nil {
-			recordsDelimiter = *def.RuntimeOverrides.RecordsDelimiter
+		// App default is 1 (enabled). Cascade: app → settings → view → runtime.
+		resolved := 1
+		if def.Settings.RecordsDelimiter != 0 {
+			resolved = def.Settings.RecordsDelimiter
 		}
-		if recordsDelimiter {
+		if view.RecordsDelimiter != 0 {
+			resolved = view.RecordsDelimiter
+		}
+		if def.RuntimeOverrides.RecordsDelimiter != nil {
+			resolved = *def.RuntimeOverrides.RecordsDelimiter
+		}
+		if resolved > 0 {
 			exportOpts = append(exportOpts, WithRecordsDelimiter())
 		}
 		content, err := formatExportBatch(format, col.ID+"/"+view.ID, columns, batchRecords, exportOpts...)

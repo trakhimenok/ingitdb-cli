@@ -944,7 +944,7 @@ func TestBuildDefaultView_RecordsDelimiterFromSettings(t *testing.T) {
 		Format:    "ingr",
 	}
 	def := &ingitdb.Definition{
-		Settings: ingitdb.Settings{RecordsDelimiter: true},
+		Settings: ingitdb.Settings{RecordsDelimiter: 1},
 	}
 	records := []ingitdb.IRecordEntry{
 		ingitdb.NewMapRecordEntry("1", map[string]any{"id": "1"}),
@@ -979,11 +979,11 @@ func TestBuildDefaultView_RuntimeOverrideDisablesViewDefDelimiter(t *testing.T) 
 		ID:               ingitdb.DefaultViewID,
 		IsDefault:        true,
 		Format:           "ingr",
-		RecordsDelimiter: true,
+		RecordsDelimiter: 1,
 	}
-	falseVal := false
+	minusOne := -1
 	def := &ingitdb.Definition{
-		RuntimeOverrides: ingitdb.RuntimeOverrides{RecordsDelimiter: &falseVal},
+		RuntimeOverrides: ingitdb.RuntimeOverrides{RecordsDelimiter: &minusOne},
 	}
 	records := []ingitdb.IRecordEntry{
 		ingitdb.NewMapRecordEntry("1", map[string]any{"id": "1"}),

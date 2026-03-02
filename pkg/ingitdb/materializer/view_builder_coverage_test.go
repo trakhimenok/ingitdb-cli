@@ -257,18 +257,19 @@ func TestReadAllRecords_YieldError(t *testing.T) {
 func TestFilterColumns_NoColumns(t *testing.T) {
 	t.Parallel()
 
-	records := []ingitdb.RecordEntry{
-		{ID: "a", Data: map[string]any{"title": "A", "desc": "Description"}},
+	records := []ingitdb.IRecordEntry{
+		ingitdb.RecordEntry{ID: "a", Data: map[string]any{"title": "A", "desc": "Description"}},
 	}
 
 	filtered := filterColumns(records, nil)
 	if len(filtered) != 1 {
 		t.Fatalf("expected 1 record, got %d", len(filtered))
 	}
-	if filtered[0].Data["title"] != "A" {
+	d := filtered[0].GetData()
+	if d["title"] != "A" {
 		t.Errorf("expected all data to be preserved")
 	}
-	if filtered[0].Data["desc"] != "Description" {
+	if d["desc"] != "Description" {
 		t.Errorf("expected all data to be preserved")
 	}
 }
@@ -276,19 +277,19 @@ func TestFilterColumns_NoColumns(t *testing.T) {
 func TestFilterColumns_NilData(t *testing.T) {
 	t.Parallel()
 
-	records := []ingitdb.RecordEntry{
-		{ID: "a", Data: nil},
-		{ID: "b", Data: map[string]any{"title": "B"}},
+	records := []ingitdb.IRecordEntry{
+		ingitdb.RecordEntry{ID: "a", Data: nil},
+		ingitdb.RecordEntry{ID: "b", Data: map[string]any{"title": "B"}},
 	}
 
 	filtered := filterColumns(records, []string{"title"})
 	if len(filtered) != 2 {
 		t.Fatalf("expected 2 records, got %d", len(filtered))
 	}
-	if filtered[0].Data != nil {
+	if filtered[0].GetData() != nil {
 		t.Errorf("expected nil data to remain nil")
 	}
-	if filtered[1].Data["title"] != "B" {
+	if filtered[1].GetData()["title"] != "B" {
 		t.Errorf("expected title to be preserved")
 	}
 }

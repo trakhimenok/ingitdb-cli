@@ -45,7 +45,8 @@ type ViewDef struct {
 	IncludeHash bool `yaml:"include_hash,omitempty"`
 
 	// RecordsDelimiter controls whether a "#-" line is written after each record in INGR output.
-	RecordsDelimiter bool `yaml:"records_delimiter,omitempty"`
+	// 0 = use project or app default (app default is 1 = enabled). 1 = enabled. -1 = disabled.
+	RecordsDelimiter int `yaml:"records_delimiter,omitempty"`
 }
 
 // Validate checks the view definition for consistency.

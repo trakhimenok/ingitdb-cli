@@ -208,7 +208,7 @@ func TestMaterialize_RecordsDelimiterPassedToBuilder(t *testing.T) {
 	logf := func(...any) {}
 
 	cmd := Materialize(homeDir, getWd, readDef, viewBuilder, logf)
-	err := runCLICommand(cmd, "--path="+dir, "--records-delimiter")
+	err := runCLICommand(cmd, "--path="+dir, "--records-delimiter=1")
 	if err != nil {
 		t.Fatalf("Materialize: %v", err)
 	}
@@ -219,8 +219,8 @@ func TestMaterialize_RecordsDelimiterPassedToBuilder(t *testing.T) {
 	if d.RuntimeOverrides.RecordsDelimiter == nil {
 		t.Fatal("expected def.RuntimeOverrides.RecordsDelimiter to be set when --records-delimiter flag is passed")
 	}
-	if !*d.RuntimeOverrides.RecordsDelimiter {
-		t.Error("expected def.RuntimeOverrides.RecordsDelimiter to be true when --records-delimiter flag is passed")
+	if *d.RuntimeOverrides.RecordsDelimiter != 1 {
+		t.Error("expected def.RuntimeOverrides.RecordsDelimiter to be 1 when --records-delimiter=1 flag is passed")
 	}
 }
 
@@ -228,7 +228,7 @@ func TestMaterialize_RecordsDelimiterPreservedFromViewDef(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	defaultView := &ingitdb.ViewDef{Format: "ingr", RecordsDelimiter: true}
+	defaultView := &ingitdb.ViewDef{Format: "ingr", RecordsDelimiter: 1}
 	def := &ingitdb.Definition{
 		Collections: map[string]*ingitdb.CollectionDef{
 			"test.items": {
@@ -257,8 +257,8 @@ func TestMaterialize_RecordsDelimiterPreservedFromViewDef(t *testing.T) {
 		t.Error("expected def.RuntimeOverrides.RecordsDelimiter to be nil when flag is not passed")
 	}
 	col := viewBuilder.lastCols[0]
-	if !col.DefaultView.RecordsDelimiter {
-		t.Error("expected ViewDef.RecordsDelimiter=true to be preserved when flag is not passed")
+	if col.DefaultView.RecordsDelimiter != 1 {
+		t.Error("expected ViewDef.RecordsDelimiter=1 to be preserved when flag is not passed")
 	}
 }
 
@@ -266,7 +266,7 @@ func TestMaterialize_RecordsDelimiterFlagOverridesViewDef(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	defaultView := &ingitdb.ViewDef{Format: "ingr", RecordsDelimiter: true}
+	defaultView := &ingitdb.ViewDef{Format: "ingr", RecordsDelimiter: 1}
 	def := &ingitdb.Definition{
 		Collections: map[string]*ingitdb.CollectionDef{
 			"test.items": {
@@ -286,7 +286,7 @@ func TestMaterialize_RecordsDelimiterFlagOverridesViewDef(t *testing.T) {
 	logf := func(...any) {}
 
 	cmd := Materialize(homeDir, getWd, readDef, viewBuilder, logf)
-	err := runCLICommand(cmd, "--path="+dir, "--records-delimiter=false")
+	err := runCLICommand(cmd, "--path="+dir, "--records-delimiter=-1")
 	if err != nil {
 		t.Fatalf("Materialize: %v", err)
 	}
@@ -294,7 +294,7 @@ func TestMaterialize_RecordsDelimiterFlagOverridesViewDef(t *testing.T) {
 	if d.RuntimeOverrides.RecordsDelimiter == nil {
 		t.Fatal("expected def.RuntimeOverrides.RecordsDelimiter to be set when flag is explicitly passed")
 	}
-	if *d.RuntimeOverrides.RecordsDelimiter {
-		t.Error("expected def.RuntimeOverrides.RecordsDelimiter to be false when --records-delimiter=false")
+	if *d.RuntimeOverrides.RecordsDelimiter != -1 {
+		t.Error("expected def.RuntimeOverrides.RecordsDelimiter to be -1 when --records-delimiter=-1")
 	}
 }

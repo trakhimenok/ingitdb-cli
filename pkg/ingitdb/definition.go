@@ -2,13 +2,15 @@ package ingitdb
 
 // Settings holds database-level defaults that apply to all collections.
 type Settings struct {
-	RecordsDelimiter bool `yaml:"records_delimiter,omitempty"`
+	// RecordsDelimiter controls whether a "#-" line is written after each record in INGR output.
+	// 0 = use project or app default (app default is 1 = enabled). 1 = enabled. -1 = disabled.
+	RecordsDelimiter int `yaml:"records_delimiter,omitempty"`
 }
 
 // RuntimeOverrides holds values set at runtime (e.g. CLI flags) that take
 // highest priority over schema settings. Not persisted to YAML.
 type RuntimeOverrides struct {
-	RecordsDelimiter *bool `yaml:"-"`
+	RecordsDelimiter *int `yaml:"-"`
 }
 
 type Definition struct {
