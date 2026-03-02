@@ -3,7 +3,6 @@ package datavalidator
 import (
 	"context"
 	"os"
-	"path/filepath"
 
 	"github.com/ingitdb/ingitdb-cli/pkg/ingitdb"
 )
@@ -17,12 +16,12 @@ type simpleValidator struct{}
 
 // Validate performs basic validation of records against their collection schemas.
 // Returns a ValidationResult with any errors found.
-func (sv *simpleValidator) Validate(_ context.Context, dbPath string, def *ingitdb.Definition) (*ingitdb.ValidationResult, error) {
+func (sv *simpleValidator) Validate(_ context.Context, _ string, def *ingitdb.Definition) (*ingitdb.ValidationResult, error) {
 	result := &ingitdb.ValidationResult{}
 
 	// Count records for each collection
-	for collectionKey := range def.Collections {
-		total, err := countRecords(dbPath, collectionKey)
+	for collectionKey, colDef := range def.Collections {
+		total, err := countRecords(colDef.DirPath)
 		if err != nil {
 			// Don't fail validation on count error, just set 0
 			total = 0
@@ -42,9 +41,7 @@ func (sv *simpleValidator) Validate(_ context.Context, dbPath string, def *ingit
 }
 
 // countRecords counts the number of record keys in a collection directory.
-func countRecords(dbPath string, collectionKey string) (int, error) {
-	collectionPath := filepath.Join(dbPath, collectionKey)
-
+func countRecords(collectionPath string) (int, error) {
 	entries, err := os.ReadDir(collectionPath)
 	if err != nil {
 		// Collection directory may not exist yet
