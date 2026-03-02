@@ -229,6 +229,7 @@ func buildDefaultView(dbPath string, repoRoot string, col *ingitdb.CollectionDef
 		}
 
 		var exportOpts []ExportOption
+		exportOpts = append(exportOpts, WithColumnTypes(col))
 		if view.IncludeHash {
 			exportOpts = append(exportOpts, WithHash())
 		}

@@ -1,4 +1,4 @@
-# INGR.io | countries/$default_view: $ID, area_km2, currency, flag, population, titles
+# INGR.io | countries/$default_view: $ID:string, area_km2:number, currency:string, flag:string, population:number, titles:map[locale]string
 "au"
 7692024
 "AUD"

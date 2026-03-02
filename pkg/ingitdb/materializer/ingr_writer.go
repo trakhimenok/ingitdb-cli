@@ -27,10 +27,16 @@ func formatINGR(viewName string, opts ExportOptions, headers []string, records [
 		if i > 0 {
 			buf.WriteString(", ")
 		}
+		name := h
 		if h == "id" {
-			buf.WriteString("$ID")
-		} else {
-			buf.WriteString(h)
+			name = "$ID"
+		}
+		buf.WriteString(name)
+		if opts.ColumnTypes != nil {
+			if ct, ok := opts.ColumnTypes[h]; ok {
+				buf.WriteByte(':')
+				buf.WriteString(string(ct))
+			}
 		}
 	}
 	buf.WriteByte('\n')

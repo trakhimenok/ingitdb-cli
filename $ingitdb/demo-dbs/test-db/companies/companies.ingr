@@ -1,4 +1,4 @@
-# INGR.io | companies/$default_view: $ID, country, industry, title
+# INGR.io | companies/$default_view: $ID:string, country:string, industry:string, title:string
 "acme-inc"
 "us"
 "Manufacturing"

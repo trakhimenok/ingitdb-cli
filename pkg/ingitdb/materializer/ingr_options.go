@@ -1,5 +1,7 @@
 package materializer
 
+import "github.com/ingitdb/ingitdb-cli/pkg/ingitdb"
+
 // Option is a generic functional option that mutates a config struct T.
 // Use with ApplyOptions to build a config from a variadic list of options.
 //
@@ -24,6 +26,10 @@ type ExportOptions struct {
 	IncludeHash bool
 	// RecordsDelimiter writes a bare "#" line after each record.
 	RecordsDelimiter bool
+	// ColumnTypes maps column names to their types for inclusion in the INGR header.
+	// When set, each header column is written as "name:type" (e.g. "area_km2:int").
+	// The "id" column key maps to the $ID pseudo-column.
+	ColumnTypes map[string]ingitdb.ColumnType
 }
 
 // ExportOption is a functional option for ExportOptions.
@@ -40,5 +46,17 @@ func WithHash() ExportOption {
 func WithRecordsDelimiter() ExportOption {
 	return func(o *ExportOptions) {
 		o.RecordsDelimiter = true
+	}
+}
+
+// WithColumnTypes populates ColumnTypes from a CollectionDef so that the INGR header
+// includes type annotations for every column (e.g. "area_km2:int", "$ID:string").
+func WithColumnTypes(col *ingitdb.CollectionDef) ExportOption {
+	return func(o *ExportOptions) {
+		o.ColumnTypes = make(map[string]ingitdb.ColumnType, len(col.Columns)+1)
+		o.ColumnTypes["id"] = ingitdb.ColumnTypeString
+		for name, def := range col.Columns {
+			o.ColumnTypes[name] = def.Type
+		}
 	}
 }
