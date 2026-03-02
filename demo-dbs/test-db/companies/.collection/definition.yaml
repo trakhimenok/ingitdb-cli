@@ -10,4 +10,7 @@ columns:
     required: true
   industry:
     type: string
+  country:
+    type: string
+    foreign_key: countries
 default_view: {}
