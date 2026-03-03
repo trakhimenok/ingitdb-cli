@@ -1,11 +1,9 @@
-# INGR.io | countries/$fk/companies/country/jp: $ID:string, country:string, industry:string, title:string
+# INGR.io | countries/$fk/companies/country/jp: $ID:string, industry:string, title:string
 "sony"
-"jp"
 "Technology"
 "Sony Group"
 #-
 "toyota"
-"jp"
 "Automotive"
 "Toyota"
 #-

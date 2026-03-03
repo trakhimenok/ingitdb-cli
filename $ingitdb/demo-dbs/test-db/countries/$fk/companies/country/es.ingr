@@ -1,11 +1,9 @@
-# INGR.io | countries/$fk/companies/country/es: $ID:string, country:string, industry:string, title:string
+# INGR.io | countries/$fk/companies/country/es: $ID:string, industry:string, title:string
 "inditex"
-"es"
 "Retail"
 "Inditex"
 #-
 "santander"
-"es"
 "Banking"
 "Banco Santander"
 #-

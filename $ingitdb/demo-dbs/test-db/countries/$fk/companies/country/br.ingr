@@ -1,11 +1,9 @@
-# INGR.io | countries/$fk/companies/country/br: $ID:string, country:string, industry:string, title:string
+# INGR.io | countries/$fk/companies/country/br: $ID:string, industry:string, title:string
 "embraer"
-"br"
 "Aerospace"
 "Embraer"
 #-
 "petrobras"
-"br"
 "Oil \u0026 Gas"
 "Petrobras"
 #-

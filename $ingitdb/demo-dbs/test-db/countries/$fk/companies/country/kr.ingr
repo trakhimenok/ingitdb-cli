@@ -1,11 +1,9 @@
-# INGR.io | countries/$fk/companies/country/kr: $ID:string, country:string, industry:string, title:string
+# INGR.io | countries/$fk/companies/country/kr: $ID:string, industry:string, title:string
 "hyundai"
-"kr"
 "Automotive"
 "Hyundai Motor Group"
 #-
 "samsung"
-"kr"
 "Technology"
 "Samsung Electronics"
 #-

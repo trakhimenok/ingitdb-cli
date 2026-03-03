@@ -1,11 +1,9 @@
-# INGR.io | countries/$fk/companies/country/ca: $ID:string, country:string, industry:string, title:string
+# INGR.io | countries/$fk/companies/country/ca: $ID:string, industry:string, title:string
 "rbc"
-"ca"
 "Banking"
 "Royal Bank of Canada"
 #-
 "shopify"
-"ca"
 "Technology"
 "Shopify"
 #-

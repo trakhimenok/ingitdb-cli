@@ -1,11 +1,9 @@
-# INGR.io | countries/$fk/companies/country/au: $ID:string, country:string, industry:string, title:string
+# INGR.io | countries/$fk/companies/country/au: $ID:string, industry:string, title:string
 "bhp"
-"au"
 "Mining"
 "BHP"
 #-
 "commonwealth-bank"
-"au"
 "Banking"
 "Commonwealth Bank"
 #-
