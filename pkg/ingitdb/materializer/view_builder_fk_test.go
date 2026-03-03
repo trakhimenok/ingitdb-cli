@@ -34,9 +34,31 @@ func makeDefaultView(format string) *ingitdb.ViewDef {
 	}
 }
 
-// fkFilePath builds the expected FK view file path.
-func fkFilePath(outputRoot, relColPath, colName, fkCollection, fkValue, ext string) string {
-	return filepath.Join(outputRoot, ingitdb.IngitdbDir, relColPath, "$fk_"+colName, fkCollection, fkValue+"."+ext)
+// fkFilePath builds the expected FK view file path under the referred collection.
+// referredRelColPath is relative to outputRoot (e.g. "countries").
+// referringColID is the ID of the referring collection (e.g. "companies").
+// fieldName is the FK column name on the referring collection (e.g. "country").
+func fkFilePath(outputRoot, referredRelColPath, referringColID, fieldName, fkValue, ext string) string {
+	return filepath.Join(outputRoot, ingitdb.IngitdbDir, referredRelColPath, "$fk", referringColID, fieldName, fkValue+"."+ext)
+}
+
+// makeDefWithCountries returns a Definition with a "countries" collection at tmpDir/countries.
+func makeDefWithCountries(tmpDir string) *ingitdb.Definition {
+	return &ingitdb.Definition{
+		Collections: map[string]*ingitdb.CollectionDef{
+			"countries": {ID: "countries", DirPath: filepath.Join(tmpDir, "countries")},
+		},
+	}
+}
+
+// makeDefWithCountriesAndDepts returns a Definition with "countries" and "departments" collections.
+func makeDefWithCountriesAndDepts(tmpDir string) *ingitdb.Definition {
+	return &ingitdb.Definition{
+		Collections: map[string]*ingitdb.CollectionDef{
+			"countries":   {ID: "countries", DirPath: filepath.Join(tmpDir, "countries")},
+			"departments": {ID: "departments", DirPath: filepath.Join(tmpDir, "departments")},
+		},
+	}
 }
 
 // TestBuildFKViews_HappyPath_SingleFKColumn verifies that two distinct FK values produce
@@ -47,7 +69,6 @@ func TestBuildFKViews_HappyPath_SingleFKColumn(t *testing.T) {
 	tmpDir := t.TempDir()
 	col := makeCompaniesCol(t, filepath.Join(tmpDir, "companies"))
 	view := makeDefaultView("json")
-	def := &ingitdb.Definition{}
 
 	records := []ingitdb.IRecordEntry{
 		ingitdb.NewMapRecordEntry("acme", map[string]any{"id": "acme", "name": "Acme", "country": "gb"}),
@@ -55,7 +76,7 @@ func TestBuildFKViews_HappyPath_SingleFKColumn(t *testing.T) {
 		ingitdb.NewMapRecordEntry("bmo", map[string]any{"id": "bmo", "name": "BMO", "country": "ca"}),
 	}
 
-	created, updated, unchanged, errs := buildFKViews(tmpDir, "", col, def, view, records, nil)
+	created, updated, unchanged, errs := buildFKViews(tmpDir, "", col, makeDefWithCountries(tmpDir), view, records, nil)
 
 	if len(errs) > 0 {
 		t.Fatalf("unexpected errors: %v", errs)
@@ -70,8 +91,8 @@ func TestBuildFKViews_HappyPath_SingleFKColumn(t *testing.T) {
 		t.Errorf("expected 0 unchanged, got %d", unchanged)
 	}
 
-	gbPath := fkFilePath(tmpDir, "companies", "country", "countries", "gb", "json")
-	caPath := fkFilePath(tmpDir, "companies", "country", "countries", "ca", "json")
+	gbPath := fkFilePath(tmpDir, "countries", "companies", "country", "gb", "json")
+	caPath := fkFilePath(tmpDir, "countries", "companies", "country", "ca", "json")
 
 	gbContent, err := os.ReadFile(gbPath)
 	if err != nil {
@@ -104,7 +125,6 @@ func TestBuildFKViews_NullAndEmptyFKValuesSkipped(t *testing.T) {
 	tmpDir := t.TempDir()
 	col := makeCompaniesCol(t, filepath.Join(tmpDir, "companies"))
 	view := makeDefaultView("json")
-	def := &ingitdb.Definition{}
 
 	records := []ingitdb.IRecordEntry{
 		ingitdb.NewMapRecordEntry("r1", map[string]any{"id": "r1", "name": "US Co", "country": "us"}),
@@ -112,7 +132,7 @@ func TestBuildFKViews_NullAndEmptyFKValuesSkipped(t *testing.T) {
 		ingitdb.NewMapRecordEntry("r3", map[string]any{"id": "r3", "name": "Nil Country", "country": nil}),
 	}
 
-	created, _, _, errs := buildFKViews(tmpDir, "", col, def, view, records, nil)
+	created, _, _, errs := buildFKViews(tmpDir, "", col, makeDefWithCountries(tmpDir), view, records, nil)
 
 	if len(errs) > 0 {
 		t.Fatalf("unexpected errors: %v", errs)
@@ -121,12 +141,12 @@ func TestBuildFKViews_NullAndEmptyFKValuesSkipped(t *testing.T) {
 		t.Errorf("expected 1 file created (only us), got %d", created)
 	}
 
-	usPath := fkFilePath(tmpDir, "companies", "country", "countries", "us", "json")
+	usPath := fkFilePath(tmpDir, "countries", "companies", "country", "us", "json")
 	if _, err := os.Stat(usPath); err != nil {
 		t.Errorf("us.json should exist: %v", err)
 	}
 
-	fkDir := filepath.Join(tmpDir, ingitdb.IngitdbDir, "companies", "$fk_country", "countries")
+	fkDir := filepath.Join(tmpDir, ingitdb.IngitdbDir, "countries", "$fk", "companies", "country")
 	entries, err := os.ReadDir(fkDir)
 	if err != nil {
 		t.Fatalf("readdir fkDir: %v", err)
@@ -136,8 +156,8 @@ func TestBuildFKViews_NullAndEmptyFKValuesSkipped(t *testing.T) {
 	}
 }
 
-// TestBuildFKViews_MultipleFKColumns verifies that independent $fk_* subtrees are created
-// for each FK column.
+// TestBuildFKViews_MultipleFKColumns verifies that independent $fk subtrees are created
+// under each referred collection for each FK column.
 func TestBuildFKViews_MultipleFKColumns(t *testing.T) {
 	t.Parallel()
 
@@ -153,7 +173,6 @@ func TestBuildFKViews_MultipleFKColumns(t *testing.T) {
 		},
 	}
 	view := makeDefaultView("json")
-	def := &ingitdb.Definition{}
 
 	records := []ingitdb.IRecordEntry{
 		ingitdb.NewMapRecordEntry("alice", map[string]any{"id": "alice", "name": "Alice", "country": "gb", "department": "eng"}),
@@ -161,7 +180,7 @@ func TestBuildFKViews_MultipleFKColumns(t *testing.T) {
 		ingitdb.NewMapRecordEntry("carol", map[string]any{"id": "carol", "name": "Carol", "country": "gb", "department": "hr"}),
 	}
 
-	created, _, _, errs := buildFKViews(tmpDir, "", col, def, view, records, nil)
+	created, _, _, errs := buildFKViews(tmpDir, "", col, makeDefWithCountriesAndDepts(tmpDir), view, records, nil)
 
 	if len(errs) > 0 {
 		t.Fatalf("unexpected errors: %v", errs)
@@ -171,20 +190,20 @@ func TestBuildFKViews_MultipleFKColumns(t *testing.T) {
 		t.Errorf("expected 4 files created (2 country + 2 department), got %d", created)
 	}
 
-	// Verify both FK subtrees exist.
-	countryDir := filepath.Join(tmpDir, ingitdb.IngitdbDir, "employees", "$fk_country")
-	deptDir := filepath.Join(tmpDir, ingitdb.IngitdbDir, "employees", "$fk_department")
+	// Verify both FK subtrees exist under the referred collections.
+	countryDir := filepath.Join(tmpDir, ingitdb.IngitdbDir, "countries", "$fk", "employees", "country")
+	deptDir := filepath.Join(tmpDir, ingitdb.IngitdbDir, "departments", "$fk", "employees", "department")
 
 	if _, err := os.Stat(countryDir); err != nil {
-		t.Errorf("$fk_country subtree should exist: %v", err)
+		t.Errorf("countries/$fk/employees/country subtree should exist: %v", err)
 	}
 	if _, err := os.Stat(deptDir); err != nil {
-		t.Errorf("$fk_department subtree should exist: %v", err)
+		t.Errorf("departments/$fk/employees/department subtree should exist: %v", err)
 	}
 
 	// Verify specific files.
-	gbPath := fkFilePath(tmpDir, "employees", "country", "countries", "gb", "json")
-	engPath := fkFilePath(tmpDir, "employees", "department", "departments", "eng", "json")
+	gbPath := fkFilePath(tmpDir, "countries", "employees", "country", "gb", "json")
+	engPath := fkFilePath(tmpDir, "departments", "employees", "department", "eng", "json")
 	if _, err := os.Stat(gbPath); err != nil {
 		t.Errorf("gb.json should exist: %v", err)
 	}
@@ -201,7 +220,7 @@ func TestBuildFKViews_Idempotency(t *testing.T) {
 	tmpDir := t.TempDir()
 	col := makeCompaniesCol(t, filepath.Join(tmpDir, "companies"))
 	view := makeDefaultView("json")
-	def := &ingitdb.Definition{}
+	def := makeDefWithCountries(tmpDir)
 
 	records := []ingitdb.IRecordEntry{
 		ingitdb.NewMapRecordEntry("acme", map[string]any{"id": "acme", "name": "Acme", "country": "gb"}),
@@ -244,7 +263,7 @@ func TestBuildFKViews_IdempotencyAfterChange(t *testing.T) {
 	tmpDir := t.TempDir()
 	col := makeCompaniesCol(t, filepath.Join(tmpDir, "companies"))
 	view := makeDefaultView("json")
-	def := &ingitdb.Definition{}
+	def := makeDefWithCountries(tmpDir)
 
 	records1 := []ingitdb.IRecordEntry{
 		ingitdb.NewMapRecordEntry("acme", map[string]any{"id": "acme", "name": "Acme", "country": "gb"}),
@@ -293,13 +312,12 @@ func TestBuildFKViews_NoFKColumns(t *testing.T) {
 		},
 	}
 	view := makeDefaultView("json")
-	def := &ingitdb.Definition{}
 
 	records := []ingitdb.IRecordEntry{
 		ingitdb.NewMapRecordEntry("1", map[string]any{"id": "1", "name": "Widget"}),
 	}
 
-	created, updated, unchanged, errs := buildFKViews(tmpDir, "", col, def, view, records, nil)
+	created, updated, unchanged, errs := buildFKViews(tmpDir, "", col, &ingitdb.Definition{}, view, records, nil)
 
 	if len(errs) > 0 {
 		t.Errorf("unexpected errors: %v", errs)
@@ -308,7 +326,7 @@ func TestBuildFKViews_NoFKColumns(t *testing.T) {
 		t.Errorf("expected zero counters for no-FK collection, got created=%d updated=%d unchanged=%d", created, updated, unchanged)
 	}
 
-	// No $fk_* directory should exist.
+	// No $fk directory should exist.
 	ingitdbDir := filepath.Join(tmpDir, ingitdb.IngitdbDir)
 	if _, err := os.Stat(ingitdbDir); err == nil {
 		entries, readErr := os.ReadDir(ingitdbDir)
@@ -350,9 +368,9 @@ func TestBuildFKViews_NoDefaultView_BuildViewsIntegration(t *testing.T) {
 	}
 
 	// No FK view files should exist since no default_view.
-	fkDir := filepath.Join(tmpDir, ingitdb.IngitdbDir, "companies", "$fk_country")
+	fkDir := filepath.Join(tmpDir, ingitdb.IngitdbDir, "countries", "$fk", "companies")
 	if _, statErr := os.Stat(fkDir); statErr == nil {
-		t.Errorf("$fk_country directory should not exist when there is no default_view")
+		t.Errorf("countries/$fk/companies directory should not exist when there is no default_view")
 	}
 	_ = result
 }
@@ -365,13 +383,12 @@ func TestBuildFKViews_INGRHeaderHasColumnTypeAnnotations(t *testing.T) {
 	tmpDir := t.TempDir()
 	col := makeCompaniesCol(t, filepath.Join(tmpDir, "companies"))
 	view := makeDefaultView("ingr")
-	def := &ingitdb.Definition{}
 
 	records := []ingitdb.IRecordEntry{
 		ingitdb.NewMapRecordEntry("acme", map[string]any{"id": "acme", "name": "Acme", "country": "gb"}),
 	}
 
-	created, _, _, errs := buildFKViews(tmpDir, "", col, def, view, records, nil)
+	created, _, _, errs := buildFKViews(tmpDir, "", col, makeDefWithCountries(tmpDir), view, records, nil)
 	if len(errs) > 0 {
 		t.Fatalf("unexpected errors: %v", errs)
 	}
@@ -379,7 +396,7 @@ func TestBuildFKViews_INGRHeaderHasColumnTypeAnnotations(t *testing.T) {
 		t.Fatalf("expected 1 file created, got %d", created)
 	}
 
-	gbPath := fkFilePath(tmpDir, "companies", "country", "countries", "gb", "ingr")
+	gbPath := fkFilePath(tmpDir, "countries", "companies", "country", "gb", "ingr")
 	content, err := os.ReadFile(gbPath)
 	if err != nil {
 		t.Fatalf("gb.ingr not found: %v", err)
@@ -392,32 +409,31 @@ func TestBuildFKViews_INGRHeaderHasColumnTypeAnnotations(t *testing.T) {
 }
 
 // TestBuildFKViews_ViewNameInINGRHeader verifies that the viewName embedded in the INGR
-// header follows the pattern col.ID + "/$fk_" + colName + "/" + fkCollection + "/" + fkValue.
+// header follows the pattern fkCollection + "/$fk/" + col.ID + "/" + colName + "/" + fkValue.
 func TestBuildFKViews_ViewNameInINGRHeader(t *testing.T) {
 	t.Parallel()
 
 	tmpDir := t.TempDir()
 	col := makeCompaniesCol(t, filepath.Join(tmpDir, "companies"))
 	view := makeDefaultView("ingr")
-	def := &ingitdb.Definition{}
 
 	records := []ingitdb.IRecordEntry{
 		ingitdb.NewMapRecordEntry("acme", map[string]any{"id": "acme", "name": "Acme", "country": "gb"}),
 	}
 
-	_, _, _, errs := buildFKViews(tmpDir, "", col, def, view, records, nil)
+	_, _, _, errs := buildFKViews(tmpDir, "", col, makeDefWithCountries(tmpDir), view, records, nil)
 	if len(errs) > 0 {
 		t.Fatalf("unexpected errors: %v", errs)
 	}
 
-	gbPath := fkFilePath(tmpDir, "companies", "country", "countries", "gb", "ingr")
+	gbPath := fkFilePath(tmpDir, "countries", "companies", "country", "gb", "ingr")
 	content, err := os.ReadFile(gbPath)
 	if err != nil {
 		t.Fatalf("gb.ingr not found: %v", err)
 	}
 
 	// INGR header should contain the view name pattern.
-	expectedViewName := "companies/$fk_country/countries/gb"
+	expectedViewName := "countries/$fk/companies/country/gb"
 	if !strings.Contains(string(content), expectedViewName) {
 		t.Errorf("expected INGR header to contain %q, got:\n%s", expectedViewName, string(content))
 	}
@@ -431,7 +447,6 @@ func TestBuildFKViews_ErrorAccumulation(t *testing.T) {
 	tmpDir := t.TempDir()
 	col := makeCompaniesCol(t, filepath.Join(tmpDir, "companies"))
 	view := makeDefaultView("json")
-	def := &ingitdb.Definition{}
 
 	records := []ingitdb.IRecordEntry{
 		ingitdb.NewMapRecordEntry("acme", map[string]any{"id": "acme", "name": "Acme", "country": "gb"}),
@@ -439,12 +454,12 @@ func TestBuildFKViews_ErrorAccumulation(t *testing.T) {
 	}
 
 	// Pre-create the gb path as a directory so WriteFile on it will fail.
-	gbDir := fkFilePath(tmpDir, "companies", "country", "countries", "gb", "json")
+	gbDir := fkFilePath(tmpDir, "countries", "companies", "country", "gb", "json")
 	if err := os.MkdirAll(gbDir, 0o755); err != nil {
 		t.Fatalf("setup: mkdir gb as dir: %v", err)
 	}
 
-	created, updated, unchanged, errs := buildFKViews(tmpDir, "", col, def, view, records, nil)
+	created, updated, unchanged, errs := buildFKViews(tmpDir, "", col, makeDefWithCountries(tmpDir), view, records, nil)
 
 	// At least one error should be collected.
 	if len(errs) == 0 {
@@ -452,7 +467,7 @@ func TestBuildFKViews_ErrorAccumulation(t *testing.T) {
 	}
 
 	// The ca file should still be written despite the gb failure.
-	caPath := fkFilePath(tmpDir, "companies", "country", "countries", "ca", "json")
+	caPath := fkFilePath(tmpDir, "countries", "companies", "country", "ca", "json")
 	if _, err := os.Stat(caPath); err != nil {
 		t.Errorf("ca.json should still have been written despite gb failure: %v", err)
 	}
@@ -471,7 +486,6 @@ func TestBuildFKViews_LogfCalled(t *testing.T) {
 	tmpDir := t.TempDir()
 	col := makeCompaniesCol(t, filepath.Join(tmpDir, "companies"))
 	view := makeDefaultView("json")
-	def := &ingitdb.Definition{}
 
 	records := []ingitdb.IRecordEntry{
 		ingitdb.NewMapRecordEntry("acme", map[string]any{"id": "acme", "name": "Acme", "country": "gb"}),
@@ -482,7 +496,7 @@ func TestBuildFKViews_LogfCalled(t *testing.T) {
 		logMessages = append(logMessages, fmt.Sprintf(format, args...))
 	}
 
-	created, _, _, errs := buildFKViews(tmpDir, "", col, def, view, records, logf)
+	created, _, _, errs := buildFKViews(tmpDir, "", col, makeDefWithCountries(tmpDir), view, records, logf)
 	if len(errs) > 0 {
 		t.Fatalf("unexpected errors: %v", errs)
 	}
@@ -501,7 +515,7 @@ func TestBuildFKViews_LogfCalledOnUnchanged(t *testing.T) {
 	tmpDir := t.TempDir()
 	col := makeCompaniesCol(t, filepath.Join(tmpDir, "companies"))
 	view := makeDefaultView("json")
-	def := &ingitdb.Definition{}
+	def := makeDefWithCountries(tmpDir)
 
 	records := []ingitdb.IRecordEntry{
 		ingitdb.NewMapRecordEntry("acme", map[string]any{"id": "acme", "name": "Acme", "country": "gb"}),
@@ -553,7 +567,12 @@ func TestBuildFKViews_RepoRootOverridesOutputRoot(t *testing.T) {
 		},
 	}
 	view := makeDefaultView("json")
-	def := &ingitdb.Definition{}
+	// countries collection lives alongside companies under dbPath.
+	def := &ingitdb.Definition{
+		Collections: map[string]*ingitdb.CollectionDef{
+			"countries": {ID: "countries", DirPath: filepath.Join(dbPath, "countries")},
+		},
+	}
 
 	records := []ingitdb.IRecordEntry{
 		ingitdb.NewMapRecordEntry("acme", map[string]any{"id": "acme", "name": "Acme", "country": "gb"}),
@@ -567,16 +586,16 @@ func TestBuildFKViews_RepoRootOverridesOutputRoot(t *testing.T) {
 		t.Fatalf("expected 1 created, got %d", created)
 	}
 
-	// File should be under repoRoot/$ingitdb/..., not dbPath/$ingitdb/...
-	relColPath, _ := filepath.Rel(repoRoot, col.DirPath)
-	expectedPath := filepath.Join(repoRoot, ingitdb.IngitdbDir, relColPath, "$fk_country", "countries", "gb.json")
+	// File should be under repoRoot/$ingitdb/databases/mydb/countries/$fk/companies/country/gb.json
+	referredRelColPath, _ := filepath.Rel(repoRoot, def.Collections["countries"].DirPath)
+	expectedPath := filepath.Join(repoRoot, ingitdb.IngitdbDir, referredRelColPath, "$fk", "companies", "country", "gb.json")
 	if _, err := os.Stat(expectedPath); err != nil {
 		t.Errorf("expected file at %q (relative to repoRoot) to exist: %v", expectedPath, err)
 	}
 
 	wrongPath := filepath.Join(dbPath, ingitdb.IngitdbDir, "companies", "$fk_country", "countries", "gb.json")
 	if _, err := os.Stat(wrongPath); err == nil {
-		t.Errorf("file should not be under dbPath/$ingitdb when repoRoot is set")
+		t.Errorf("file should not be under dbPath/$ingitdb/companies/$fk_country when repoRoot is set")
 	}
 }
 
@@ -592,13 +611,12 @@ func TestBuildFKViews_EmptyColumns(t *testing.T) {
 		Columns: nil,
 	}
 	view := makeDefaultView("json")
-	def := &ingitdb.Definition{}
 
 	records := []ingitdb.IRecordEntry{
 		ingitdb.NewMapRecordEntry("1", map[string]any{"id": "1"}),
 	}
 
-	created, updated, unchanged, errs := buildFKViews(tmpDir, "", col, def, view, records, nil)
+	created, updated, unchanged, errs := buildFKViews(tmpDir, "", col, &ingitdb.Definition{}, view, records, nil)
 
 	if len(errs) > 0 {
 		t.Errorf("unexpected errors: %v", errs)
@@ -621,13 +639,12 @@ func TestBuildFKViews_IncludeHash(t *testing.T) {
 		Format:      "ingr",
 		IncludeHash: true,
 	}
-	def := &ingitdb.Definition{}
 
 	records := []ingitdb.IRecordEntry{
 		ingitdb.NewMapRecordEntry("acme", map[string]any{"id": "acme", "name": "Acme", "country": "gb"}),
 	}
 
-	created, _, _, errs := buildFKViews(tmpDir, "", col, def, view, records, nil)
+	created, _, _, errs := buildFKViews(tmpDir, "", col, makeDefWithCountries(tmpDir), view, records, nil)
 	if len(errs) > 0 {
 		t.Fatalf("unexpected errors: %v", errs)
 	}
@@ -635,7 +652,7 @@ func TestBuildFKViews_IncludeHash(t *testing.T) {
 		t.Fatalf("expected 1 created, got %d", created)
 	}
 
-	gbPath := fkFilePath(tmpDir, "companies", "country", "countries", "gb", "ingr")
+	gbPath := fkFilePath(tmpDir, "countries", "companies", "country", "gb", "ingr")
 	content, err := os.ReadFile(gbPath)
 	if err != nil {
 		t.Fatalf("gb.ingr not found: %v", err)
@@ -659,6 +676,9 @@ func TestBuildFKViews_RecordsDelimiterFromSettings(t *testing.T) {
 	}
 	def := &ingitdb.Definition{
 		Settings: ingitdb.Settings{RecordsDelimiter: 1},
+		Collections: map[string]*ingitdb.CollectionDef{
+			"countries": {ID: "countries", DirPath: filepath.Join(tmpDir, "countries")},
+		},
 	}
 
 	records := []ingitdb.IRecordEntry{
@@ -673,7 +693,7 @@ func TestBuildFKViews_RecordsDelimiterFromSettings(t *testing.T) {
 		t.Fatalf("expected 1 created, got %d", created)
 	}
 
-	gbPath := fkFilePath(tmpDir, "companies", "country", "countries", "gb", "ingr")
+	gbPath := fkFilePath(tmpDir, "countries", "companies", "country", "gb", "ingr")
 	content, err := os.ReadFile(gbPath)
 	if err != nil {
 		t.Fatalf("gb.ingr not found: %v", err)
@@ -696,13 +716,12 @@ func TestBuildFKViews_RecordsDelimiterFromView(t *testing.T) {
 		Format:           "ingr",
 		RecordsDelimiter: -1,
 	}
-	def := &ingitdb.Definition{}
 
 	records := []ingitdb.IRecordEntry{
 		ingitdb.NewMapRecordEntry("acme", map[string]any{"id": "acme", "name": "Acme", "country": "gb"}),
 	}
 
-	created, _, _, errs := buildFKViews(tmpDir, "", col, def, view, records, nil)
+	created, _, _, errs := buildFKViews(tmpDir, "", col, makeDefWithCountries(tmpDir), view, records, nil)
 	if len(errs) > 0 {
 		t.Fatalf("unexpected errors: %v", errs)
 	}
@@ -710,7 +729,7 @@ func TestBuildFKViews_RecordsDelimiterFromView(t *testing.T) {
 		t.Fatalf("expected 1 created, got %d", created)
 	}
 
-	gbPath := fkFilePath(tmpDir, "companies", "country", "countries", "gb", "ingr")
+	gbPath := fkFilePath(tmpDir, "countries", "companies", "country", "gb", "ingr")
 	content, err := os.ReadFile(gbPath)
 	if err != nil {
 		t.Fatalf("gb.ingr not found: %v", err)
@@ -737,6 +756,9 @@ func TestBuildFKViews_RuntimeOverrideDisablesDelimiter(t *testing.T) {
 	minusOne := -1
 	def := &ingitdb.Definition{
 		RuntimeOverrides: ingitdb.RuntimeOverrides{RecordsDelimiter: &minusOne},
+		Collections: map[string]*ingitdb.CollectionDef{
+			"countries": {ID: "countries", DirPath: filepath.Join(tmpDir, "countries")},
+		},
 	}
 
 	records := []ingitdb.IRecordEntry{
@@ -751,7 +773,7 @@ func TestBuildFKViews_RuntimeOverrideDisablesDelimiter(t *testing.T) {
 		t.Fatalf("expected 1 created, got %d", created)
 	}
 
-	gbPath := fkFilePath(tmpDir, "companies", "country", "countries", "gb", "ingr")
+	gbPath := fkFilePath(tmpDir, "countries", "companies", "country", "gb", "ingr")
 	content, err := os.ReadFile(gbPath)
 	if err != nil {
 		t.Fatalf("gb.ingr not found: %v", err)
@@ -769,7 +791,6 @@ func TestBuildFKViews_NilDataRecordSkipped(t *testing.T) {
 	tmpDir := t.TempDir()
 	col := makeCompaniesCol(t, filepath.Join(tmpDir, "companies"))
 	view := makeDefaultView("json")
-	def := &ingitdb.Definition{}
 
 	nilDataRecord := ingitdb.NewMapRecordEntry("ghost", nil)
 	records := []ingitdb.IRecordEntry{
@@ -777,7 +798,7 @@ func TestBuildFKViews_NilDataRecordSkipped(t *testing.T) {
 		ingitdb.NewMapRecordEntry("acme", map[string]any{"id": "acme", "name": "Acme", "country": "gb"}),
 	}
 
-	created, updated, unchanged, errs := buildFKViews(tmpDir, "", col, def, view, records, nil)
+	created, updated, unchanged, errs := buildFKViews(tmpDir, "", col, makeDefWithCountries(tmpDir), view, records, nil)
 	if len(errs) > 0 {
 		t.Fatalf("unexpected errors: %v", errs)
 	}
@@ -792,7 +813,7 @@ func TestBuildFKViews_NilDataRecordSkipped(t *testing.T) {
 		t.Errorf("expected 0 unchanged, got %d", unchanged)
 	}
 
-	gbPath := fkFilePath(tmpDir, "companies", "country", "countries", "gb", "json")
+	gbPath := fkFilePath(tmpDir, "countries", "companies", "country", "gb", "json")
 	if _, err := os.Stat(gbPath); err != nil {
 		t.Errorf("gb.json should exist for the non-nil record: %v", err)
 	}
@@ -818,7 +839,7 @@ func TestBuildViews_FKViewsIntegration_DefaultView(t *testing.T) {
 		Writer:        &capturingWriter{},
 	}
 
-	result, err := builder.BuildViews(context.TODO(), tmpDir, "", col, &ingitdb.Definition{})
+	result, err := builder.BuildViews(context.TODO(), tmpDir, "", col, makeDefWithCountries(tmpDir))
 	if err != nil {
 		t.Fatalf("BuildViews: %v", err)
 	}
@@ -835,8 +856,8 @@ func TestBuildViews_FKViewsIntegration_DefaultView(t *testing.T) {
 			totalFiles, result.FilesCreated, result.FilesUpdated, result.FilesUnchanged)
 	}
 
-	gbPath := fkFilePath(tmpDir, "companies", "country", "countries", "gb", "json")
-	caPath := fkFilePath(tmpDir, "companies", "country", "countries", "ca", "json")
+	gbPath := fkFilePath(tmpDir, "countries", "companies", "country", "gb", "json")
+	caPath := fkFilePath(tmpDir, "countries", "companies", "country", "ca", "json")
 
 	if _, err := os.Stat(gbPath); err != nil {
 		t.Errorf("gb.json should exist after BuildViews: %v", err)
@@ -854,19 +875,17 @@ func TestBuildFKViews_MkdirAllError(t *testing.T) {
 	tmpDir := t.TempDir()
 	col := makeCompaniesCol(t, filepath.Join(tmpDir, "companies"))
 	view := makeDefaultView("json")
-	def := &ingitdb.Definition{}
 
-	// Block MkdirAll for both FK values by placing a regular FILE at the path that
-	// MkdirAll must treat as a directory (the "countries" subdirectory).
-	// outPath for any country value: tmpDir/$ingitdb/companies/$fk_country/countries/<val>.json
-	// filepath.Dir(outPath)         = tmpDir/$ingitdb/companies/$fk_country/countries
+	// Block MkdirAll by placing a regular FILE at the path that would be used as a directory.
+	// outPath for any country value: tmpDir/$ingitdb/countries/$fk/companies/country/<val>.json
+	// filepath.Dir(outPath)         = tmpDir/$ingitdb/countries/$fk/companies/country
 	// Creating a FILE at that path makes MkdirAll fail with "not a directory".
-	countriesDir := filepath.Join(tmpDir, ingitdb.IngitdbDir, "companies", "$fk_country", "countries")
-	countriesParent := filepath.Dir(countriesDir)
-	if err := os.MkdirAll(countriesParent, 0o755); err != nil {
+	blockDir := filepath.Join(tmpDir, ingitdb.IngitdbDir, "countries", "$fk", "companies", "country")
+	blockParent := filepath.Dir(blockDir)
+	if err := os.MkdirAll(blockParent, 0o755); err != nil {
 		t.Fatalf("setup: mkdir parent: %v", err)
 	}
-	if err := os.WriteFile(countriesDir, []byte("blocker"), 0o644); err != nil {
+	if err := os.WriteFile(blockDir, []byte("blocker"), 0o644); err != nil {
 		t.Fatalf("setup: write blocker file: %v", err)
 	}
 
@@ -874,7 +893,7 @@ func TestBuildFKViews_MkdirAllError(t *testing.T) {
 		ingitdb.NewMapRecordEntry("acme", map[string]any{"id": "acme", "name": "Acme", "country": "gb"}),
 	}
 
-	_, _, _, errs := buildFKViews(tmpDir, "", col, def, view, records, nil)
+	_, _, _, errs := buildFKViews(tmpDir, "", col, makeDefWithCountries(tmpDir), view, records, nil)
 
 	if len(errs) == 0 {
 		t.Fatal("expected at least one error due to MkdirAll failure")
@@ -888,5 +907,54 @@ func TestBuildFKViews_MkdirAllError(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("expected a 'mkdir' error in errs, got: %v", errs)
+	}
+}
+
+// TestBuildFKViews_FKCollectionNotFoundInDefinition verifies that when a FK column references
+// a collection that is not present in def.Collections, an error is appended and no file is
+// written, but processing continues for subsequent FK columns.
+func TestBuildFKViews_FKCollectionNotFoundInDefinition(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	col := makeCompaniesCol(t, filepath.Join(tmpDir, "companies"))
+	view := makeDefaultView("json")
+	// def has NO collections — "countries" is absent.
+	def := &ingitdb.Definition{}
+
+	records := []ingitdb.IRecordEntry{
+		ingitdb.NewMapRecordEntry("acme", map[string]any{"id": "acme", "name": "Acme", "country": "gb"}),
+	}
+
+	created, updated, unchanged, errs := buildFKViews(tmpDir, "", col, def, view, records, nil)
+
+	// Expect exactly one error mentioning the missing FK collection.
+	if len(errs) == 0 {
+		t.Fatal("expected an error when FK collection is not found in definition")
+	}
+	foundMsgErr := false
+	for _, e := range errs {
+		if strings.Contains(e.Error(), "countries") && strings.Contains(e.Error(), "not found") {
+			foundMsgErr = true
+			break
+		}
+	}
+	if !foundMsgErr {
+		t.Errorf("expected error mentioning %q and 'not found', got: %v", "countries", errs)
+	}
+
+	// No file should have been written.
+	if created+updated+unchanged != 0 {
+		t.Errorf("expected zero file operations when FK collection is missing, got created=%d updated=%d unchanged=%d",
+			created, updated, unchanged)
+	}
+
+	// No $ingitdb output at all.
+	ingitdbDir := filepath.Join(tmpDir, ingitdb.IngitdbDir)
+	if _, err := os.Stat(ingitdbDir); err == nil {
+		entries, readErr := os.ReadDir(ingitdbDir)
+		if readErr == nil && len(entries) > 0 {
+			t.Errorf("expected no $ingitdb output, but found: %v", entries)
+		}
 	}
 }

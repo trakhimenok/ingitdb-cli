@@ -323,7 +323,6 @@ func buildFKViews(
 	if outputRoot == "" {
 		outputRoot = dbPath
 	}
-	relColPath, _ := filepath.Rel(outputRoot, col.DirPath)
 
 	// Build export options once — same cascade logic as buildDefaultView.
 	var exportOpts []ExportOption
@@ -349,7 +348,13 @@ func buildFKViews(
 		if colDef.ForeignKey == "" {
 			continue
 		}
-		fkCollection := colDef.ForeignKey
+
+		referredColDef, ok := def.Collections[colDef.ForeignKey]
+		if !ok {
+			errs = append(errs, fmt.Errorf("buildFKViews: FK collection %q not found in definition", colDef.ForeignKey))
+			continue
+		}
+		referredRelColPath, _ := filepath.Rel(outputRoot, referredColDef.DirPath)
 
 		// Group records by FK value; skip nil/empty.
 		groups := make(map[string][]ingitdb.IRecordEntry)
@@ -369,16 +374,15 @@ func buildFKViews(
 			groups[fkVal] = append(groups[fkVal], rec)
 		}
 
-		fkDir := "$fk_" + colName
 		for fkValue, fkRecords := range groups {
-			viewName := col.ID + "/$fk_" + colName + "/" + fkCollection + "/" + fkValue
+			viewName := colDef.ForeignKey + "/$fk/" + col.ID + "/" + colName + "/" + fkValue
 			content, err := formatExportBatch(format, viewName, exportColumns, fkRecords, exportOpts...)
 			if err != nil {
 				errs = append(errs, fmt.Errorf("buildFKViews %s/%s: format: %w", colName, fkValue, err))
 				continue
 			}
 
-			outPath := filepath.Join(outputRoot, ingitdb.IngitdbDir, relColPath, fkDir, fkCollection, fkValue+"."+ext)
+			outPath := filepath.Join(outputRoot, ingitdb.IngitdbDir, referredRelColPath, "$fk", col.ID, colName, fkValue+"."+ext)
 
 			if err := os.MkdirAll(filepath.Dir(outPath), 0o755); err != nil {
 				errs = append(errs, fmt.Errorf("buildFKViews %s/%s: mkdir: %w", colName, fkValue, err))

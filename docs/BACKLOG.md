@@ -132,7 +132,7 @@ Tasks within each phase are ordered by dependency — implement them top to bott
 
 When a collection has both a `default_view` and FK columns, the materializer generates one filtered
 view file per unique FK value under
-`$ingitdb/{relColPath}/$fk_{colName}/{fkCollection}/{fkValue}.{ext}`.
+`$ingitdb/{referredRelColPath}/$fk/{referring_col}/{field}/{fkValue}.{ext}`.
 
 → [Full specification](../features/fk-filtered-views.md)
 
