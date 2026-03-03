@@ -394,6 +394,60 @@ func TestValidationResult_GetRecordCounts_NotFound(t *testing.T) {
 	}
 }
 
+func TestValidationResult_SetRecordCount(t *testing.T) {
+	t.Parallel()
+
+	vr := &ValidationResult{}
+
+	// First call initialises the map; second call overwrites the value.
+	vr.SetRecordCount("tasks", 5)
+	vr.SetRecordCount("users", 12)
+	vr.SetRecordCount("tasks", 8) // overwrite
+
+	if got := vr.GetRecordCount("tasks"); got != 8 {
+		t.Errorf("GetRecordCount(tasks) = %d, want 8", got)
+	}
+	if got := vr.GetRecordCount("users"); got != 12 {
+		t.Errorf("GetRecordCount(users) = %d, want 12", got)
+	}
+}
+
+func TestValidationResult_GetRecordCount_Missing(t *testing.T) {
+	t.Parallel()
+
+	vr := &ValidationResult{}
+
+	// A collection that was never set must return zero (zero-value of int map lookup).
+	if got := vr.GetRecordCount("nonexistent"); got != 0 {
+		t.Errorf("GetRecordCount(nonexistent) = %d, want 0", got)
+	}
+}
+
+func TestValidationResult_SetRecordCount_Concurrent(t *testing.T) {
+	t.Parallel()
+
+	vr := &ValidationResult{}
+	var wg sync.WaitGroup
+
+	numGoroutines := 10
+	for i := 0; i < numGoroutines; i++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			collectionID := fmt.Sprintf("col%d", id)
+			vr.SetRecordCount(collectionID, id*3)
+		}(i)
+	}
+	wg.Wait()
+
+	for i := 0; i < numGoroutines; i++ {
+		collectionID := fmt.Sprintf("col%d", i)
+		if got := vr.GetRecordCount(collectionID); got != i*3 {
+			t.Errorf("GetRecordCount(%s) = %d, want %d", collectionID, got, i*3)
+		}
+	}
+}
+
 func TestValidationResult_SetRecordCounts_Concurrent(t *testing.T) {
 	t.Parallel()
 

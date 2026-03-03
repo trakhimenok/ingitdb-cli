@@ -22,7 +22,7 @@ func NewGitHubDB(cfg Config) (dal.DB, error) {
 		return nil, err
 	}
 	concrete, ok := reader.(*githubFileReader)
-	if !ok {
+	if !ok { // untestable: NewGitHubFileReader always returns *githubFileReader
 		return nil, fmt.Errorf("internal error: expected *githubFileReader")
 	}
 	db := &githubDB{
@@ -41,7 +41,7 @@ func NewGitHubDBWithDef(cfg Config, def *ingitdb.Definition) (dal.DB, error) {
 		return nil, err
 	}
 	concrete, ok := reader.(*githubFileReader)
-	if !ok {
+	if !ok { // untestable: NewGitHubFileReader always returns *githubFileReader
 		return nil, fmt.Errorf("internal error: expected *githubFileReader")
 	}
 	db := &githubDB{

@@ -607,3 +607,60 @@ func TestWriteMapOfIDRecordsFile_Success(t *testing.T) {
 		t.Errorf("expected 2 records, got %d", len(result))
 	}
 }
+
+// TestInsert_SingleRecord_StatPermissionError covers the
+// `return fmt.Errorf("failed to check file %s: %w", path, statErr)` branch
+// in Insert (default/SingleRecord path).
+// When the parent directory is non-executable, os.Stat of a file inside it
+// returns EACCES — an error that is not os.ErrNotExist — triggering this branch.
+func TestInsert_SingleRecord_StatPermissionError(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	// Use a subdirectory as the collection root so we can restrict permissions
+	// without affecting t.TempDir() cleanup.
+	collDir := filepath.Join(dir, "coll")
+	mkdirErr := os.Mkdir(collDir, 0o755)
+	if mkdirErr != nil {
+		t.Fatalf("setup: mkdir collDir: %v", mkdirErr)
+	}
+
+	colDef := &ingitdb.CollectionDef{
+		ID:      "test.items",
+		DirPath: collDir,
+		RecordFile: &ingitdb.RecordFileDef{
+			Name:       "{key}.yaml",
+			Format:     "yaml",
+			RecordType: ingitdb.SingleRecord,
+		},
+	}
+	def := &ingitdb.Definition{
+		Collections: map[string]*ingitdb.CollectionDef{"test.items": colDef},
+	}
+
+	// Remove all permissions from the collection directory so that
+	// os.Stat of any file inside returns EACCES (not ErrNotExist).
+	chmodErr := os.Chmod(collDir, 0o000)
+	if chmodErr != nil {
+		t.Fatalf("setup: chmod collDir: %v", chmodErr)
+	}
+	// Restore permissions so t.TempDir() cleanup can delete the directory.
+	t.Cleanup(func() { _ = os.Chmod(collDir, 0o755) })
+
+	db := openTestDB(t, dir, def)
+	ctx := context.Background()
+	key := dal.NewKeyWithID("test.items", "test")
+	data := map[string]any{"name": "Test"}
+	record := dal.NewRecordWithData(key, data)
+
+	err := db.RunReadwriteTransaction(ctx, func(ctx context.Context, tx dal.ReadwriteTransaction) error {
+		return tx.Insert(ctx, record)
+	})
+	if err == nil {
+		t.Fatal("expected permission error from os.Stat, got nil")
+	}
+	const prefix = "failed to check file"
+	if len(err.Error()) < len(prefix) || err.Error()[:len(prefix)] != prefix {
+		t.Errorf("error = %q, want prefix %q", err.Error(), prefix)
+	}
+}

@@ -76,7 +76,7 @@ func TestBuildFKViews_HappyPath_SingleFKColumn(t *testing.T) {
 		ingitdb.NewMapRecordEntry("bmo", map[string]any{"id": "bmo", "name": "BMO", "country": "ca"}),
 	}
 
-	created, updated, unchanged, errs := buildFKViews(tmpDir, "", col, makeDefWithCountries(tmpDir), view, records, nil)
+	created, updated, unchanged, errs := buildFKViews(tmpDir, "", col, makeDefWithCountries(tmpDir), view, records, nil, defaultFSops())
 
 	if len(errs) > 0 {
 		t.Fatalf("unexpected errors: %v", errs)
@@ -132,7 +132,7 @@ func TestBuildFKViews_NullAndEmptyFKValuesSkipped(t *testing.T) {
 		ingitdb.NewMapRecordEntry("r3", map[string]any{"id": "r3", "name": "Nil Country", "country": nil}),
 	}
 
-	created, _, _, errs := buildFKViews(tmpDir, "", col, makeDefWithCountries(tmpDir), view, records, nil)
+	created, _, _, errs := buildFKViews(tmpDir, "", col, makeDefWithCountries(tmpDir), view, records, nil, defaultFSops())
 
 	if len(errs) > 0 {
 		t.Fatalf("unexpected errors: %v", errs)
@@ -180,7 +180,7 @@ func TestBuildFKViews_MultipleFKColumns(t *testing.T) {
 		ingitdb.NewMapRecordEntry("carol", map[string]any{"id": "carol", "name": "Carol", "country": "gb", "department": "hr"}),
 	}
 
-	created, _, _, errs := buildFKViews(tmpDir, "", col, makeDefWithCountriesAndDepts(tmpDir), view, records, nil)
+	created, _, _, errs := buildFKViews(tmpDir, "", col, makeDefWithCountriesAndDepts(tmpDir), view, records, nil, defaultFSops())
 
 	if len(errs) > 0 {
 		t.Fatalf("unexpected errors: %v", errs)
@@ -228,7 +228,7 @@ func TestBuildFKViews_Idempotency(t *testing.T) {
 	}
 
 	// First run.
-	created1, updated1, unchanged1, errs1 := buildFKViews(tmpDir, "", col, def, view, records, nil)
+	created1, updated1, unchanged1, errs1 := buildFKViews(tmpDir, "", col, def, view, records, nil, defaultFSops())
 	if len(errs1) > 0 {
 		t.Fatalf("first run errors: %v", errs1)
 	}
@@ -240,7 +240,7 @@ func TestBuildFKViews_Idempotency(t *testing.T) {
 	}
 
 	// Second run — identical records.
-	created2, updated2, unchanged2, errs2 := buildFKViews(tmpDir, "", col, def, view, records, nil)
+	created2, updated2, unchanged2, errs2 := buildFKViews(tmpDir, "", col, def, view, records, nil, defaultFSops())
 	if len(errs2) > 0 {
 		t.Fatalf("second run errors: %v", errs2)
 	}
@@ -271,7 +271,7 @@ func TestBuildFKViews_IdempotencyAfterChange(t *testing.T) {
 	}
 
 	// First run.
-	_, _, _, errs1 := buildFKViews(tmpDir, "", col, def, view, records1, nil)
+	_, _, _, errs1 := buildFKViews(tmpDir, "", col, def, view, records1, nil, defaultFSops())
 	if len(errs1) > 0 {
 		t.Fatalf("first run errors: %v", errs1)
 	}
@@ -282,7 +282,7 @@ func TestBuildFKViews_IdempotencyAfterChange(t *testing.T) {
 		ingitdb.NewMapRecordEntry("shopify", map[string]any{"id": "shopify", "name": "Shopify", "country": "ca"}),
 	}
 
-	created2, updated2, unchanged2, errs2 := buildFKViews(tmpDir, "", col, def, view, records2, nil)
+	created2, updated2, unchanged2, errs2 := buildFKViews(tmpDir, "", col, def, view, records2, nil, defaultFSops())
 	if len(errs2) > 0 {
 		t.Fatalf("second run errors: %v", errs2)
 	}
@@ -317,7 +317,7 @@ func TestBuildFKViews_NoFKColumns(t *testing.T) {
 		ingitdb.NewMapRecordEntry("1", map[string]any{"id": "1", "name": "Widget"}),
 	}
 
-	created, updated, unchanged, errs := buildFKViews(tmpDir, "", col, &ingitdb.Definition{}, view, records, nil)
+	created, updated, unchanged, errs := buildFKViews(tmpDir, "", col, &ingitdb.Definition{}, view, records, nil, defaultFSops())
 
 	if len(errs) > 0 {
 		t.Errorf("unexpected errors: %v", errs)
@@ -388,7 +388,7 @@ func TestBuildFKViews_INGRHeaderHasColumnTypeAnnotations(t *testing.T) {
 		ingitdb.NewMapRecordEntry("acme", map[string]any{"id": "acme", "name": "Acme", "country": "gb"}),
 	}
 
-	created, _, _, errs := buildFKViews(tmpDir, "", col, makeDefWithCountries(tmpDir), view, records, nil)
+	created, _, _, errs := buildFKViews(tmpDir, "", col, makeDefWithCountries(tmpDir), view, records, nil, defaultFSops())
 	if len(errs) > 0 {
 		t.Fatalf("unexpected errors: %v", errs)
 	}
@@ -421,7 +421,7 @@ func TestBuildFKViews_ViewNameInINGRHeader(t *testing.T) {
 		ingitdb.NewMapRecordEntry("acme", map[string]any{"id": "acme", "name": "Acme", "country": "gb"}),
 	}
 
-	_, _, _, errs := buildFKViews(tmpDir, "", col, makeDefWithCountries(tmpDir), view, records, nil)
+	_, _, _, errs := buildFKViews(tmpDir, "", col, makeDefWithCountries(tmpDir), view, records, nil, defaultFSops())
 	if len(errs) > 0 {
 		t.Fatalf("unexpected errors: %v", errs)
 	}
@@ -454,7 +454,7 @@ func TestBuildFKViews_FKColumnExcludedFromOutput(t *testing.T) {
 		ingitdb.NewMapRecordEntry("bbc", map[string]any{"id": "bbc", "name": "BBC", "country": "gb"}),
 	}
 
-	created, _, _, errs := buildFKViews(tmpDir, "", col, makeDefWithCountries(tmpDir), view, records, nil)
+	created, _, _, errs := buildFKViews(tmpDir, "", col, makeDefWithCountries(tmpDir), view, records, nil, defaultFSops())
 	if len(errs) > 0 {
 		t.Fatalf("unexpected errors: %v", errs)
 	}
@@ -512,7 +512,7 @@ func TestBuildFKViews_ErrorAccumulation(t *testing.T) {
 		t.Fatalf("setup: mkdir gb as dir: %v", err)
 	}
 
-	created, updated, unchanged, errs := buildFKViews(tmpDir, "", col, makeDefWithCountries(tmpDir), view, records, nil)
+	created, updated, unchanged, errs := buildFKViews(tmpDir, "", col, makeDefWithCountries(tmpDir), view, records, nil, defaultFSops())
 
 	// At least one error should be collected.
 	if len(errs) == 0 {
@@ -549,7 +549,7 @@ func TestBuildFKViews_LogfCalled(t *testing.T) {
 		logMessages = append(logMessages, fmt.Sprintf(format, args...))
 	}
 
-	created, _, _, errs := buildFKViews(tmpDir, "", col, makeDefWithCountries(tmpDir), view, records, logf)
+	created, _, _, errs := buildFKViews(tmpDir, "", col, makeDefWithCountries(tmpDir), view, records, logf, defaultFSops())
 	if len(errs) > 0 {
 		t.Fatalf("unexpected errors: %v", errs)
 	}
@@ -575,7 +575,7 @@ func TestBuildFKViews_LogfCalledOnUnchanged(t *testing.T) {
 	}
 
 	// First run to create.
-	_, _, _, errs1 := buildFKViews(tmpDir, "", col, def, view, records, nil)
+	_, _, _, errs1 := buildFKViews(tmpDir, "", col, def, view, records, nil, defaultFSops())
 	if len(errs1) > 0 {
 		t.Fatalf("first run errors: %v", errs1)
 	}
@@ -585,7 +585,7 @@ func TestBuildFKViews_LogfCalledOnUnchanged(t *testing.T) {
 	logf := func(format string, args ...any) {
 		logMessages = append(logMessages, fmt.Sprintf(format, args...))
 	}
-	_, _, unchanged, errs2 := buildFKViews(tmpDir, "", col, def, view, records, logf)
+	_, _, unchanged, errs2 := buildFKViews(tmpDir, "", col, def, view, records, logf, defaultFSops())
 	if len(errs2) > 0 {
 		t.Fatalf("second run errors: %v", errs2)
 	}
@@ -631,7 +631,7 @@ func TestBuildFKViews_RepoRootOverridesOutputRoot(t *testing.T) {
 		ingitdb.NewMapRecordEntry("acme", map[string]any{"id": "acme", "name": "Acme", "country": "gb"}),
 	}
 
-	created, _, _, errs := buildFKViews(dbPath, repoRoot, col, def, view, records, nil)
+	created, _, _, errs := buildFKViews(dbPath, repoRoot, col, def, view, records, nil, defaultFSops())
 	if len(errs) > 0 {
 		t.Fatalf("unexpected errors: %v", errs)
 	}
@@ -669,7 +669,7 @@ func TestBuildFKViews_EmptyColumns(t *testing.T) {
 		ingitdb.NewMapRecordEntry("1", map[string]any{"id": "1"}),
 	}
 
-	created, updated, unchanged, errs := buildFKViews(tmpDir, "", col, &ingitdb.Definition{}, view, records, nil)
+	created, updated, unchanged, errs := buildFKViews(tmpDir, "", col, &ingitdb.Definition{}, view, records, nil, defaultFSops())
 
 	if len(errs) > 0 {
 		t.Errorf("unexpected errors: %v", errs)
@@ -697,7 +697,7 @@ func TestBuildFKViews_IncludeHash(t *testing.T) {
 		ingitdb.NewMapRecordEntry("acme", map[string]any{"id": "acme", "name": "Acme", "country": "gb"}),
 	}
 
-	created, _, _, errs := buildFKViews(tmpDir, "", col, makeDefWithCountries(tmpDir), view, records, nil)
+	created, _, _, errs := buildFKViews(tmpDir, "", col, makeDefWithCountries(tmpDir), view, records, nil, defaultFSops())
 	if len(errs) > 0 {
 		t.Fatalf("unexpected errors: %v", errs)
 	}
@@ -738,7 +738,7 @@ func TestBuildFKViews_RecordsDelimiterFromSettings(t *testing.T) {
 		ingitdb.NewMapRecordEntry("acme", map[string]any{"id": "acme", "name": "Acme", "country": "gb"}),
 	}
 
-	created, _, _, errs := buildFKViews(tmpDir, "", col, def, view, records, nil)
+	created, _, _, errs := buildFKViews(tmpDir, "", col, def, view, records, nil, defaultFSops())
 	if len(errs) > 0 {
 		t.Fatalf("unexpected errors: %v", errs)
 	}
@@ -774,7 +774,7 @@ func TestBuildFKViews_RecordsDelimiterFromView(t *testing.T) {
 		ingitdb.NewMapRecordEntry("acme", map[string]any{"id": "acme", "name": "Acme", "country": "gb"}),
 	}
 
-	created, _, _, errs := buildFKViews(tmpDir, "", col, makeDefWithCountries(tmpDir), view, records, nil)
+	created, _, _, errs := buildFKViews(tmpDir, "", col, makeDefWithCountries(tmpDir), view, records, nil, defaultFSops())
 	if len(errs) > 0 {
 		t.Fatalf("unexpected errors: %v", errs)
 	}
@@ -818,7 +818,7 @@ func TestBuildFKViews_RuntimeOverrideDisablesDelimiter(t *testing.T) {
 		ingitdb.NewMapRecordEntry("acme", map[string]any{"id": "acme", "name": "Acme", "country": "gb"}),
 	}
 
-	created, _, _, errs := buildFKViews(tmpDir, "", col, def, view, records, nil)
+	created, _, _, errs := buildFKViews(tmpDir, "", col, def, view, records, nil, defaultFSops())
 	if len(errs) > 0 {
 		t.Fatalf("unexpected errors: %v", errs)
 	}
@@ -851,7 +851,7 @@ func TestBuildFKViews_NilDataRecordSkipped(t *testing.T) {
 		ingitdb.NewMapRecordEntry("acme", map[string]any{"id": "acme", "name": "Acme", "country": "gb"}),
 	}
 
-	created, updated, unchanged, errs := buildFKViews(tmpDir, "", col, makeDefWithCountries(tmpDir), view, records, nil)
+	created, updated, unchanged, errs := buildFKViews(tmpDir, "", col, makeDefWithCountries(tmpDir), view, records, nil, defaultFSops())
 	if len(errs) > 0 {
 		t.Fatalf("unexpected errors: %v", errs)
 	}
@@ -946,7 +946,7 @@ func TestBuildFKViews_MkdirAllError(t *testing.T) {
 		ingitdb.NewMapRecordEntry("acme", map[string]any{"id": "acme", "name": "Acme", "country": "gb"}),
 	}
 
-	_, _, _, errs := buildFKViews(tmpDir, "", col, makeDefWithCountries(tmpDir), view, records, nil)
+	_, _, _, errs := buildFKViews(tmpDir, "", col, makeDefWithCountries(tmpDir), view, records, nil, defaultFSops())
 
 	if len(errs) == 0 {
 		t.Fatal("expected at least one error due to MkdirAll failure")
@@ -979,7 +979,7 @@ func TestBuildFKViews_FKCollectionNotFoundInDefinition(t *testing.T) {
 		ingitdb.NewMapRecordEntry("acme", map[string]any{"id": "acme", "name": "Acme", "country": "gb"}),
 	}
 
-	created, updated, unchanged, errs := buildFKViews(tmpDir, "", col, def, view, records, nil)
+	created, updated, unchanged, errs := buildFKViews(tmpDir, "", col, def, view, records, nil, defaultFSops())
 
 	// Expect exactly one error mentioning the missing FK collection.
 	if len(errs) == 0 {
@@ -1009,5 +1009,40 @@ func TestBuildFKViews_FKCollectionNotFoundInDefinition(t *testing.T) {
 		if readErr == nil && len(entries) > 0 {
 			t.Errorf("expected no $ingitdb output, but found: %v", entries)
 		}
+	}
+}
+
+// TestBuildFKViews_EmptyFormat verifies that when view.Format is empty the function defaults
+// to "ingr" format (covering the `if format == ""` branch at view_builder.go:323).
+func TestBuildFKViews_EmptyFormat(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	col := makeCompaniesCol(t, filepath.Join(tmpDir, "companies"))
+
+	// Empty Format — exercises the `if format == "" { format = "ingr" }` branch.
+	view := &ingitdb.ViewDef{
+		ID:        ingitdb.DefaultViewID,
+		IsDefault: true,
+		Format:    "", // intentionally empty
+	}
+
+	records := []ingitdb.IRecordEntry{
+		ingitdb.NewMapRecordEntry("acme", map[string]any{"id": "acme", "name": "Acme", "country": "gb"}),
+	}
+
+	created, updated, unchanged, errs := buildFKViews(tmpDir, "", col, makeDefWithCountries(tmpDir), view, records, nil, defaultFSops())
+
+	if len(errs) > 0 {
+		t.Fatalf("unexpected errors: %v", errs)
+	}
+	if created != 1 {
+		t.Errorf("expected 1 file created, got %d (updated=%d unchanged=%d)", created, updated, unchanged)
+	}
+
+	// The output file should be written with the default "ingr" extension.
+	gbPath := fkFilePath(tmpDir, "countries", "companies", "country", "gb", "ingr")
+	if _, err := os.Stat(gbPath); err != nil {
+		t.Errorf("expected FK view file at %s, got error: %v", gbPath, err)
 	}
 }

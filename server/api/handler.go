@@ -39,6 +39,7 @@ type Handler struct {
 	authConfig           auth.Config
 	exchangeCodeForToken func(ctx context.Context, code string) (string, error)
 	validateToken        func(ctx context.Context, token string) error
+	randRead             func(b []byte) (int, error) // injectable for testing
 	requireAuth          bool
 	router               *httprouter.Router
 }
@@ -61,6 +62,7 @@ func NewHandlerWithAuth(cfg auth.Config, requireAuth bool) *Handler {
 		validateToken: func(ctx context.Context, token string) error {
 			return auth.ValidateGitHubToken(ctx, token, nil)
 		},
+		randRead:    rand.Read,
 		requireAuth: requireAuth,
 	}
 	h.router = h.buildRouter()
@@ -129,9 +131,9 @@ func writeError(w http.ResponseWriter, status int, message string) {
 	writeJSON(w, status, map[string]string{"error": message})
 }
 
-func randomOAuthState() (string, error) {
+func (h *Handler) randomOAuthState() (string, error) {
 	b := make([]byte, 32)
-	_, err := rand.Read(b)
+	_, err := h.randRead(b)
 	if err != nil {
 		return "", fmt.Errorf("failed to generate oauth state: %w", err)
 	}
@@ -151,9 +153,6 @@ func oauthStateCookieFromRequest(r *http.Request) (*http.Cookie, string, error) 
 		cookie, err := r.Cookie(name)
 		if err == nil {
 			return cookie, name, nil
-		}
-		if err != http.ErrNoCookie {
-			return nil, "", err
 		}
 	}
 	return nil, "", http.ErrNoCookie
@@ -180,7 +179,7 @@ func (h *Handler) githubLogin(w http.ResponseWriter, r *http.Request, _ httprout
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	state, err := randomOAuthState()
+	state, err := h.randomOAuthState()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

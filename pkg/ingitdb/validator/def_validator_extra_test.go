@@ -34,7 +34,7 @@ func TestReadRootCollections_WildcardError(t *testing.T) {
 		},
 	}
 
-	_, err := readRootCollections(t.TempDir(), rootConfig, ingitdb.NewReadOptions())
+	_, err := newDefLoader().readRootCollections(t.TempDir(), rootConfig, ingitdb.NewReadOptions())
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -53,7 +53,7 @@ func TestReadRootCollections_SingleError(t *testing.T) {
 		},
 	}
 
-	_, err := readRootCollections(t.TempDir(), rootConfig, ingitdb.NewReadOptions())
+	_, err := newDefLoader().readRootCollections(t.TempDir(), rootConfig, ingitdb.NewReadOptions())
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -66,7 +66,7 @@ func TestReadRootCollections_SingleError(t *testing.T) {
 func TestReadCollectionDef_FileMissing(t *testing.T) {
 	t.Parallel()
 
-	_, err := readCollectionDef(t.TempDir(), "missing", "", "id", nil, ingitdb.NewReadOptions())
+	_, err := newDefLoader().readCollectionDef(t.TempDir(), "missing", "", "id", nil, ingitdb.NewReadOptions())
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -83,7 +83,7 @@ func TestReadCollectionDef_InvalidYAML(t *testing.T) {
 	dir := filepath.Join(root, "bad")
 	writeCollectionDef(t, dir, "a: [1,2\n")
 
-	_, err := readCollectionDef(root, "bad", "", "id", nil, ingitdb.NewReadOptions())
+	_, err := newDefLoader().readCollectionDef(root, "bad", "", "id", nil, ingitdb.NewReadOptions())
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -100,7 +100,7 @@ func TestReadCollectionDef_InvalidDefinitionWithValidation(t *testing.T) {
 	dir := filepath.Join(root, "invalid")
 	writeCollectionDef(t, dir, "columns: {}\n")
 
-	_, err := readCollectionDef(root, "invalid", "", "id", nil, ingitdb.NewReadOptions(ingitdb.Validate()))
+	_, err := newDefLoader().readCollectionDef(root, "invalid", "", "id", nil, ingitdb.NewReadOptions(ingitdb.Validate()))
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -152,7 +152,7 @@ columns:
 		t.Fatalf("failed to write sub-subcollection file: %s", err)
 	}
 
-	_, err := readCollectionDef(root, "invalid_sub", "", "companies", nil, ingitdb.NewReadOptions(ingitdb.Validate()))
+	_, err := newDefLoader().readCollectionDef(root, "invalid_sub", "", "companies", nil, ingitdb.NewReadOptions(ingitdb.Validate()))
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -165,7 +165,7 @@ columns:
 func TestLoadViews_NoViewsDir(t *testing.T) {
 	t.Parallel()
 
-	views, err := loadViews(filepath.Join(t.TempDir(), ingitdb.SchemaDir), ingitdb.NewReadOptions())
+	views, err := newDefLoader().loadViews(filepath.Join(t.TempDir(), ingitdb.SchemaDir), ingitdb.NewReadOptions())
 	if err != nil {
 		t.Fatalf("expected nil error, got %v", err)
 	}
@@ -192,7 +192,7 @@ records_var_name: items
 		t.Fatalf("failed to write view file: %v", err)
 	}
 
-	views, err := loadViews(filepath.Join(root, ingitdb.SchemaDir), ingitdb.NewReadOptions())
+	views, err := newDefLoader().loadViews(filepath.Join(root, ingitdb.SchemaDir), ingitdb.NewReadOptions())
 	if err != nil {
 		t.Fatalf("expected nil error, got %v", err)
 	}
@@ -226,7 +226,7 @@ func TestLoadViews_InvalidYAML(t *testing.T) {
 		t.Fatalf("failed to write view file: %v", err)
 	}
 
-	_, err := loadViews(filepath.Join(root, ingitdb.SchemaDir), ingitdb.NewReadOptions())
+	_, err := newDefLoader().loadViews(filepath.Join(root, ingitdb.SchemaDir), ingitdb.NewReadOptions())
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -254,7 +254,7 @@ func TestLoadViews_InvalidViewWithValidation(t *testing.T) {
 		t.Fatalf("failed to write view file: %v", err)
 	}
 
-	views, err := loadViews(filepath.Join(root, ingitdb.SchemaDir), ingitdb.NewReadOptions(ingitdb.Validate()))
+	views, err := newDefLoader().loadViews(filepath.Join(root, ingitdb.SchemaDir), ingitdb.NewReadOptions(ingitdb.Validate()))
 	if err != nil {
 		t.Fatalf("expected nil error, got %v", err)
 	}
@@ -272,7 +272,7 @@ func TestLoadViews_SkipsDirectories(t *testing.T) {
 		t.Fatalf("failed to create views subdir: %v", err)
 	}
 
-	views, err := loadViews(filepath.Join(root, ingitdb.SchemaDir), ingitdb.NewReadOptions())
+	views, err := newDefLoader().loadViews(filepath.Join(root, ingitdb.SchemaDir), ingitdb.NewReadOptions())
 	if err != nil {
 		t.Fatalf("expected nil error, got %v", err)
 	}
@@ -293,7 +293,7 @@ func TestLoadViews_SkipsNonYamlFiles(t *testing.T) {
 		t.Fatalf("failed to write non-yaml file: %v", err)
 	}
 
-	views, err := loadViews(filepath.Join(root, ingitdb.SchemaDir), ingitdb.NewReadOptions())
+	views, err := newDefLoader().loadViews(filepath.Join(root, ingitdb.SchemaDir), ingitdb.NewReadOptions())
 	if err != nil {
 		t.Fatalf("expected nil error, got %v", err)
 	}

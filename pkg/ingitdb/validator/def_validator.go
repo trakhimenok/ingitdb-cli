@@ -22,6 +22,18 @@ func (definitionReader) ReadDefinition(dbPath string, opts ...ingitdb.ReadOption
 	return ReadDefinition(dbPath, opts...)
 }
 
+// defLoader holds the I/O primitives used when reading collection definitions.
+// Struct fields allow test code to inject fakes without changing production behaviour.
+type defLoader struct {
+	readFile func(string) ([]byte, error)
+	readDir  func(string) ([]os.DirEntry, error)
+}
+
+// newDefLoader returns a defLoader that delegates directly to the OS.
+func newDefLoader() defLoader {
+	return defLoader{readFile: os.ReadFile, readDir: os.ReadDir}
+}
+
 func ReadDefinition(rootPath string, o ...ingitdb.ReadOption) (def *ingitdb.Definition, err error) {
 	opts := ingitdb.NewReadOptions(o...)
 	var rootConfig config.RootConfig
@@ -30,7 +42,8 @@ func ReadDefinition(rootPath string, o ...ingitdb.ReadOption) (def *ingitdb.Defi
 		err = fmt.Errorf("failed to read root config from %s: %v", config.IngitDBDirName, err)
 		return
 	}
-	def, err = readRootCollections(rootPath, rootConfig, opts)
+	dl := newDefLoader()
+	def, err = dl.readRootCollections(rootPath, rootConfig, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -41,7 +54,7 @@ func ReadDefinition(rootPath string, o ...ingitdb.ReadOption) (def *ingitdb.Defi
 	return def, nil
 }
 
-func readRootCollections(rootPath string, rootConfig config.RootConfig, o ingitdb.ReadOptions) (def *ingitdb.Definition, err error) {
+func (dl defLoader) readRootCollections(rootPath string, rootConfig config.RootConfig, o ingitdb.ReadOptions) (def *ingitdb.Definition, err error) {
 	def = new(ingitdb.Definition)
 	def.Collections = make(map[string]*ingitdb.CollectionDef)
 	for id, colPath := range rootConfig.RootCollections {
@@ -50,7 +63,7 @@ func readRootCollections(rootPath string, rootConfig config.RootConfig, o ingitd
 			return
 		}
 		var colDef *ingitdb.CollectionDef
-		if colDef, err = readCollectionDef(rootPath, colPath, "", id, nil, o); err != nil {
+		if colDef, err = dl.readCollectionDef(rootPath, colPath, "", id, nil, o); err != nil {
 			err = fmt.Errorf("failed to validate root collection def ID=%s: %w", id, err)
 			return
 		}
@@ -59,7 +72,7 @@ func readRootCollections(rootPath string, rootConfig config.RootConfig, o ingitd
 	return
 }
 
-func readCollectionDef(rootPath, relPath, parentPath, id string, subPath []string, o ingitdb.ReadOptions) (colDef *ingitdb.CollectionDef, err error) {
+func (dl defLoader) readCollectionDef(rootPath, relPath, parentPath, id string, subPath []string, o ingitdb.ReadOptions) (colDef *ingitdb.CollectionDef, err error) {
 	// For root collections, the definition file is in relPath/.collection/definition.yaml
 	// For subcollections, it is located recursively inside relPath/.collection/subcollections/...
 	colDir := filepath.Join(rootPath, relPath)
@@ -73,7 +86,7 @@ func readCollectionDef(rootPath, relPath, parentPath, id string, subPath []strin
 
 	colDefFilePath := filepath.Join(schemaDir, ingitdb.CollectionDefFileName)
 	var fileContent []byte
-	fileContent, err = os.ReadFile(colDefFilePath)
+	fileContent, err = dl.readFile(colDefFilePath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read file %s: %w", colDefFilePath, err)
 	}
@@ -109,12 +122,12 @@ func readCollectionDef(rootPath, relPath, parentPath, id string, subPath []strin
 		}
 	}
 
-	if colDef.SubCollections, err = loadSubCollections(rootPath, relPath, subPath, fullPath, o); err != nil {
+	if colDef.SubCollections, err = dl.loadSubCollections(rootPath, relPath, subPath, fullPath, o); err != nil {
 		err = fmt.Errorf("failed to load subcollections for '%s': %w", id, err)
 		return
 	}
 
-	if colDef.Views, err = loadViews(schemaDir, o); err != nil {
+	if colDef.Views, err = dl.loadViews(schemaDir, o); err != nil {
 		err = fmt.Errorf("failed to load views for '%s': %w", id, err)
 		return
 	}
@@ -131,7 +144,7 @@ func readCollectionDef(rootPath, relPath, parentPath, id string, subPath []strin
 	return
 }
 
-func loadSubCollections(rootPath, relPath string, subPath []string, parentPath string, o ingitdb.ReadOptions) (map[string]*ingitdb.CollectionDef, error) {
+func (dl defLoader) loadSubCollections(rootPath, relPath string, subPath []string, parentPath string, o ingitdb.ReadOptions) (map[string]*ingitdb.CollectionDef, error) {
 	schemaDir := filepath.Join(rootPath, relPath, ingitdb.SchemaDir)
 	if len(subPath) > 0 {
 		for _, p := range subPath {
@@ -140,7 +153,7 @@ func loadSubCollections(rootPath, relPath string, subPath []string, parentPath s
 	}
 	subCollectionsPath := filepath.Join(schemaDir, "subcollections")
 
-	entries, err := os.ReadDir(subCollectionsPath)
+	entries, err := dl.readDir(subCollectionsPath)
 	if os.IsNotExist(err) {
 		return nil, nil // No subcollections
 	}
@@ -157,7 +170,7 @@ func loadSubCollections(rootPath, relPath string, subPath []string, parentPath s
 		id := entry.Name()
 		childSubPath := append(append([]string(nil), subPath...), id)
 
-		colDef, err := readCollectionDef(rootPath, relPath, parentPath, id, childSubPath, o)
+		colDef, err := dl.readCollectionDef(rootPath, relPath, parentPath, id, childSubPath, o)
 		if err != nil {
 			return nil, err
 		}
@@ -170,9 +183,9 @@ func loadSubCollections(rootPath, relPath string, subPath []string, parentPath s
 	return subCollections, nil
 }
 
-func loadViews(schemaDir string, o ingitdb.ReadOptions) (map[string]*ingitdb.ViewDef, error) {
+func (dl defLoader) loadViews(schemaDir string, o ingitdb.ReadOptions) (map[string]*ingitdb.ViewDef, error) {
 	viewsPath := filepath.Join(schemaDir, "views")
-	entries, err := os.ReadDir(viewsPath)
+	entries, err := dl.readDir(viewsPath)
 	if os.IsNotExist(err) {
 		return nil, nil // No views
 	}
@@ -189,7 +202,7 @@ func loadViews(schemaDir string, o ingitdb.ReadOptions) (map[string]*ingitdb.Vie
 		id := strings.TrimSuffix(entry.Name(), ".yaml")
 		viewDefFilePath := filepath.Join(viewsPath, entry.Name())
 
-		fileContent, err := os.ReadFile(viewDefFilePath)
+		fileContent, err := dl.readFile(viewDefFilePath)
 		if err != nil {
 			return nil, fmt.Errorf("failed to read file %s: %w", viewDefFilePath, err)
 		}

@@ -23,6 +23,15 @@ func TestCollectionDefValidate_Errors(t *testing.T) {
 		err  string
 	}{
 		{
+			name: "missing_id",
+			def: &CollectionDef{
+				ID:         "",
+				Columns:    columns,
+				RecordFile: recordFile,
+			},
+			err: "missing 'id' in collection definition",
+		},
+		{
 			name: "missing_columns",
 			def: &CollectionDef{
 				ID:         "test_id",
@@ -217,6 +226,106 @@ func TestCollectionDefValidate_DefaultView(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestCollectionDefValidate_InvalidSubCollection(t *testing.T) {
+	t.Parallel()
+
+	columns := map[string]*ColumnDef{
+		"name": {Type: "string"},
+	}
+	recordFile := &RecordFileDef{
+		Format:     "JSON",
+		Name:       "{key}.json",
+		RecordType: SingleRecord,
+	}
+
+	// Subcollection has no ID → Validate() on it returns "missing 'id'".
+	def := &CollectionDef{
+		ID:         "parent",
+		Columns:    columns,
+		RecordFile: recordFile,
+		SubCollections: map[string]*CollectionDef{
+			"child": {
+				// ID intentionally left empty so child.Validate() fails.
+				Columns:    columns,
+				RecordFile: recordFile,
+			},
+		},
+	}
+
+	err := def.Validate()
+	if err == nil {
+		t.Fatal("expected error for invalid subcollection, got nil")
+	}
+	if !strings.Contains(err.Error(), "invalid subcollection 'child'") {
+		t.Fatalf("expected error to contain %q, got %q", "invalid subcollection 'child'", err.Error())
+	}
+}
+
+func TestCollectionDefValidate_InvalidReadme(t *testing.T) {
+	t.Parallel()
+
+	columns := map[string]*ColumnDef{
+		"name": {Type: "string"},
+	}
+	recordFile := &RecordFileDef{
+		Format:     "JSON",
+		Name:       "{key}.json",
+		RecordType: SingleRecord,
+	}
+
+	// DataPreview with no ID causes ViewDef.Validate() to fail, which bubbles
+	// through CollectionReadmeDef.Validate() → CollectionDef.Validate().
+	def := &CollectionDef{
+		ID:         "test_id",
+		Columns:    columns,
+		RecordFile: recordFile,
+		Readme: &CollectionReadmeDef{
+			DataPreview: &ViewDef{
+				// ID deliberately empty → ViewDef.Validate() returns error.
+			},
+		},
+	}
+
+	err := def.Validate()
+	if err == nil {
+		t.Fatal("expected error for invalid readme DataPreview, got nil")
+	}
+	if !strings.Contains(err.Error(), "invalid readme") {
+		t.Fatalf("expected error to contain %q, got %q", "invalid readme", err.Error())
+	}
+}
+
+func TestCollectionReadmeDefValidate_InvalidDataPreview(t *testing.T) {
+	t.Parallel()
+
+	// Test CollectionReadmeDef.Validate() directly so the error branch is
+	// exercised independently of CollectionDef.Validate().
+	readme := &CollectionReadmeDef{
+		DataPreview: &ViewDef{
+			// ID empty → ViewDef.Validate() returns "missing 'id' in view definition".
+		},
+	}
+
+	err := readme.Validate()
+	if err == nil {
+		t.Fatal("expected error for DataPreview with missing ID, got nil")
+	}
+	if !strings.Contains(err.Error(), "invalid data_preview") {
+		t.Fatalf("expected error to contain %q, got %q", "invalid data_preview", err.Error())
+	}
+}
+
+func TestCollectionReadmeDefValidate_NilDataPreview(t *testing.T) {
+	t.Parallel()
+
+	readme := &CollectionReadmeDef{HideColumns: true}
+
+	err := readme.Validate()
+	if err != nil {
+		t.Fatalf("expected no error for nil DataPreview, got %v", err)
 	}
 }
 

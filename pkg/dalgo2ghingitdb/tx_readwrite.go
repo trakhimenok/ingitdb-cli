@@ -183,7 +183,8 @@ func (r readwriteTx) Delete(ctx context.Context, key *dal.Key) error {
 			toEncode[k] = v
 		}
 		encoded, encodeErr := encodeRecordContent(toEncode, colDef.RecordFile.Format)
-		if encodeErr != nil {
+		if encodeErr != nil { // untestable: ParseMapOfIDRecordsContent already fails for unsupported formats;
+			// for supported formats (json/yaml) parsed data can always be re-encoded
 			return encodeErr
 		}
 		writeErr := r.db.fileReader.writeFile(ctx, recordPath, "ingitdb: delete "+colDef.ID+"/"+recordKey, encoded, sha)

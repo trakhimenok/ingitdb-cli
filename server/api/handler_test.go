@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	cryptorand "crypto/rand"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -18,14 +19,24 @@ import (
 	"github.com/ingitdb/ingitdb-cli/server/auth"
 )
 
+// cryptoRandRead is the real rand.Read used as default in test handlers.
+var cryptoRandRead = cryptorand.Read
+
 // --- fakes ---
 
 // fakeFileReader implements dalgo2ghingitdb.FileReader returning preset content.
+// readErrors maps file paths to errors that should be returned instead of content.
 type fakeFileReader struct {
-	files map[string][]byte
+	files      map[string][]byte
+	readErrors map[string]error
 }
 
 func (f *fakeFileReader) ReadFile(_ context.Context, filePath string) ([]byte, bool, error) {
+	if f.readErrors != nil {
+		if err, ok := f.readErrors[filePath]; ok {
+			return nil, false, err
+		}
+	}
 	content, ok := f.files[filePath]
 	return content, ok, nil
 }
@@ -45,13 +56,19 @@ func newFakeStore(records map[string]map[string]any) *fakeStore {
 }
 
 // fakeReadTx implements dal.ReadTransaction.
-type fakeReadTx struct{ s *fakeStore }
+type fakeReadTx struct {
+	s      *fakeStore
+	getErr error // if non-nil, Get() returns this error
+}
 
 var _ dal.ReadTransaction = (*fakeReadTx)(nil)
 
 func (t *fakeReadTx) ID() string                      { return "fake-read" }
 func (t *fakeReadTx) Options() dal.TransactionOptions { return nil }
 func (t *fakeReadTx) Get(_ context.Context, record dal.Record) error {
+	if t.getErr != nil {
+		return t.getErr
+	}
 	k := record.Key().String()
 	if t.s.deleted[k] {
 		record.SetError(dal.ErrRecordNotFound)
@@ -82,12 +99,20 @@ func (t *fakeReadTx) ExecuteQueryToRecordsetReader(_ context.Context, _ dal.Quer
 }
 
 // fakeReadwriteTx implements dal.ReadwriteTransaction.
-type fakeReadwriteTx struct{ fakeReadTx }
+type fakeReadwriteTx struct {
+	fakeReadTx
+	setErr    error // if non-nil, Set() returns this error
+	deleteErr error // if non-nil, Delete() returns this error
+	insertErr error // if non-nil, Insert() returns this error
+}
 
 var _ dal.ReadwriteTransaction = (*fakeReadwriteTx)(nil)
 
 func (t *fakeReadwriteTx) ID() string { return "fake-rw" }
 func (t *fakeReadwriteTx) Insert(_ context.Context, record dal.Record, _ ...dal.InsertOption) error {
+	if t.insertErr != nil {
+		return t.insertErr
+	}
 	record.SetError(nil)
 	t.s.records[record.Key().String()] = record.Data().(map[string]any)
 	return nil
@@ -96,11 +121,17 @@ func (t *fakeReadwriteTx) InsertMulti(_ context.Context, _ []dal.Record, _ ...da
 	return nil
 }
 func (t *fakeReadwriteTx) Set(_ context.Context, record dal.Record) error {
+	if t.setErr != nil {
+		return t.setErr
+	}
 	t.s.records[record.Key().String()] = record.Data().(map[string]any)
 	return nil
 }
 func (t *fakeReadwriteTx) SetMulti(_ context.Context, _ []dal.Record) error { return nil }
 func (t *fakeReadwriteTx) Delete(_ context.Context, key *dal.Key) error {
+	if t.deleteErr != nil {
+		return t.deleteErr
+	}
 	t.s.deleted[key.String()] = true
 	return nil
 }
@@ -116,8 +147,19 @@ func (t *fakeReadwriteTx) UpdateMulti(_ context.Context, _ []*dal.Key, _ []updat
 }
 
 // fakeDB implements dal.DB with a fakeStore.
+// Error fields allow injecting failures at different layers:
+//   - readTxErr: returned from RunReadonlyTransaction before calling the worker
+//   - writeTxErr: returned from RunReadwriteTransaction before calling the worker
+//   - getTxErr: injected into the tx so that tx.Get() returns this error
+//   - setErr / deleteErr / insertErr: injected into the rw-tx for op-level errors
 type fakeDB struct {
-	s *fakeStore
+	s          *fakeStore
+	readTxErr  error
+	writeTxErr error
+	getTxErr   error
+	setErr     error
+	deleteErr  error
+	insertErr  error
 }
 
 func (db *fakeDB) ID() string { return "fake" }
@@ -126,10 +168,22 @@ func (db *fakeDB) Adapter() dal.Adapter {
 }
 func (db *fakeDB) Schema() dal.Schema { return nil }
 func (db *fakeDB) RunReadonlyTransaction(_ context.Context, f dal.ROTxWorker, _ ...dal.TransactionOption) error {
-	return f(context.Background(), &fakeReadTx{s: db.s})
+	if db.readTxErr != nil {
+		return db.readTxErr
+	}
+	return f(context.Background(), &fakeReadTx{s: db.s, getErr: db.getTxErr})
 }
 func (db *fakeDB) RunReadwriteTransaction(_ context.Context, f dal.RWTxWorker, _ ...dal.TransactionOption) error {
-	return f(context.Background(), &fakeReadwriteTx{fakeReadTx: fakeReadTx{s: db.s}})
+	if db.writeTxErr != nil {
+		return db.writeTxErr
+	}
+	tx := &fakeReadwriteTx{
+		fakeReadTx: fakeReadTx{s: db.s, getErr: db.getTxErr},
+		setErr:     db.setErr,
+		deleteErr:  db.deleteErr,
+		insertErr:  db.insertErr,
+	}
+	return f(context.Background(), tx)
 }
 func (db *fakeDB) Get(_ context.Context, record dal.Record) error {
 	return (&fakeReadTx{s: db.s}).Get(context.Background(), record)
@@ -193,6 +247,7 @@ func newTestHandler() (*Handler, *fakeStore) {
 			_, _ = ctx, token
 			return nil
 		},
+		randRead:    cryptoRandRead,
 		requireAuth: false,
 	}
 	h.router = h.buildRouter()
@@ -787,4 +842,794 @@ type errorReader struct{}
 
 func (e *errorReader) Read(p []byte) (n int, err error) {
 	return 0, fmt.Errorf("read error")
+}
+
+// ---------------------------------------------------------------------------
+// NewHandlerWithAuth closure coverage
+// ---------------------------------------------------------------------------
+
+// TestNewHandlerWithAuth_ExchangeClosureBody exercises the exchangeCodeForToken
+// closure created inside NewHandlerWithAuth so that the closure body is counted
+// as covered.  We pass an empty code so ExchangeCodeForToken returns immediately
+// with "code is required" (no network I/O).
+func TestNewHandlerWithAuth_ExchangeClosureBody(t *testing.T) {
+	t.Parallel()
+	cfg := auth.Config{
+		GitHubClientID:     "id",
+		GitHubClientSecret: "secret",
+		CallbackURL:        "http://localhost/cb",
+	}
+	h := NewHandlerWithAuth(cfg, false)
+	_, err := h.exchangeCodeForToken(context.Background(), "")
+	if err == nil {
+		t.Fatal("expected error for empty code, got nil")
+	}
+}
+
+// TestNewHandlerWithAuth_ValidateClosureBody exercises the validateToken
+// closure created inside NewHandlerWithAuth so that the closure body is counted
+// as covered.  We pass an empty token so ValidateGitHubToken returns immediately
+// with "token is required" (no network I/O).
+func TestNewHandlerWithAuth_ValidateClosureBody(t *testing.T) {
+	t.Parallel()
+	h := NewHandlerWithAuth(auth.Config{}, false)
+	err := h.validateToken(context.Background(), "")
+	if err == nil {
+		t.Fatal("expected error for empty token, got nil")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// randomOAuthState
+// ---------------------------------------------------------------------------
+
+func TestRandomOAuthState_RandError(t *testing.T) {
+	t.Parallel()
+	h, _ := newTestHandler()
+	h.randRead = func(b []byte) (int, error) {
+		return 0, fmt.Errorf("rand failure")
+	}
+	req := httptest.NewRequest(http.MethodGet, "/auth/github/login", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "failed to generate oauth state") {
+		t.Errorf("unexpected body: %s", w.Body.String())
+	}
+}
+
+// ---------------------------------------------------------------------------
+// oauthStateCookieNameForConfig
+// ---------------------------------------------------------------------------
+
+func TestOAuthStateCookieNameForConfig_Secure(t *testing.T) {
+	t.Parallel()
+	cfg := auth.Config{CookieSecure: true}
+	got := oauthStateCookieNameForConfig(cfg)
+	if got != oauthStateCookieName {
+		t.Errorf("got %q, want %q", got, oauthStateCookieName)
+	}
+}
+
+func TestOAuthStateCookieNameForConfig_Insecure(t *testing.T) {
+	t.Parallel()
+	cfg := auth.Config{CookieSecure: false}
+	got := oauthStateCookieNameForConfig(cfg)
+	if got != legacyOAuthStateCookieName {
+		t.Errorf("got %q, want %q", got, legacyOAuthStateCookieName)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// oauthStateCookieFromRequest
+// ---------------------------------------------------------------------------
+
+func TestOAuthStateCookieFromRequest_HostOnly(t *testing.T) {
+	t.Parallel()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.AddCookie(&http.Cookie{Name: oauthStateCookieName, Value: "state-val"})
+	cookie, name, err := oauthStateCookieFromRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if name != oauthStateCookieName {
+		t.Errorf("got name %q, want %q", name, oauthStateCookieName)
+	}
+	if cookie.Value != "state-val" {
+		t.Errorf("got value %q, want %q", cookie.Value, "state-val")
+	}
+}
+
+func TestOAuthStateCookieFromRequest_Legacy(t *testing.T) {
+	t.Parallel()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.AddCookie(&http.Cookie{Name: legacyOAuthStateCookieName, Value: "legacy-val"})
+	cookie, name, err := oauthStateCookieFromRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if name != legacyOAuthStateCookieName {
+		t.Errorf("got name %q, want %q", name, legacyOAuthStateCookieName)
+	}
+	if cookie.Value != "legacy-val" {
+		t.Errorf("got value %q, want %q", cookie.Value, "legacy-val")
+	}
+}
+
+func TestOAuthStateCookieFromRequest_Missing(t *testing.T) {
+	t.Parallel()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	_, _, err := oauthStateCookieFromRequest(req)
+	if err != http.ErrNoCookie {
+		t.Errorf("expected http.ErrNoCookie, got %v", err)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// githubLogin – insecure config uses legacy cookie name
+// ---------------------------------------------------------------------------
+
+func TestGitHubLoginRedirect_InsecureCookie(t *testing.T) {
+	t.Parallel()
+	h, _ := newTestHandler()
+	h.authConfig.CookieSecure = false
+	req := httptest.NewRequest(http.MethodGet, "/auth/github/login", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusFound {
+		t.Fatalf("expected 302, got %d", w.Code)
+	}
+	setCookieHeader := w.Header().Get("Set-Cookie")
+	if !strings.Contains(setCookieHeader, legacyOAuthStateCookieName) {
+		t.Errorf("expected legacy cookie name in Set-Cookie, got %q", setCookieHeader)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// authenticatedToken – requireAuth=true paths
+// ---------------------------------------------------------------------------
+
+func TestAuthenticatedToken_RequireAuthValidToken(t *testing.T) {
+	t.Parallel()
+	h, _ := newTestHandler()
+	h.requireAuth = true
+	req := httptest.NewRequest(http.MethodGet, "/ingitdb/v0/collections?db=owner/repo", nil)
+	req.Header.Set("Authorization", "Bearer valid-token")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	// validateToken is the no-op fake, so we should reach listCollections successfully.
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestAuthenticatedToken_RequireAuthInvalidToken(t *testing.T) {
+	t.Parallel()
+	h, _ := newTestHandler()
+	h.requireAuth = true
+	h.validateToken = func(_ context.Context, _ string) error {
+		return fmt.Errorf("token rejected")
+	}
+	req := httptest.NewRequest(http.MethodGet, "/ingitdb/v0/collections?db=owner/repo", nil)
+	req.Header.Set("Authorization", "Bearer bad-token")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "token rejected") {
+		t.Errorf("unexpected body: %s", w.Body.String())
+	}
+}
+
+// ---------------------------------------------------------------------------
+// readDefinitionFromGitHub – all remaining error paths
+// ---------------------------------------------------------------------------
+
+func TestReadDefinitionFromGitHub_RootReadError(t *testing.T) {
+	t.Parallel()
+	fr := &fakeFileReader{
+		files: map[string][]byte{},
+		readErrors: map[string]error{
+			".ingitdb/root-collections.yaml": fmt.Errorf("io error"),
+		},
+	}
+	_, err := readDefinitionFromGitHub(context.Background(), fr)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "failed to read") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestReadDefinitionFromGitHub_RootYAMLInvalid(t *testing.T) {
+	t.Parallel()
+	fr := &fakeFileReader{
+		files: map[string][]byte{
+			// nested map cannot unmarshal into map[string]string
+			".ingitdb/root-collections.yaml": []byte("countries:\n  nested: value\n"),
+		},
+	}
+	_, err := readDefinitionFromGitHub(context.Background(), fr)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "failed to parse") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestReadDefinitionFromGitHub_CollectionReadError(t *testing.T) {
+	t.Parallel()
+	fr := &fakeFileReader{
+		files: map[string][]byte{
+			".ingitdb/root-collections.yaml": []byte(rootConfigYAML),
+		},
+		readErrors: map[string]error{
+			"data/countries/.collection/countries.yaml": fmt.Errorf("col io error"),
+		},
+	}
+	_, err := readDefinitionFromGitHub(context.Background(), fr)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "failed to read collection def") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestReadDefinitionFromGitHub_CollectionNotFound(t *testing.T) {
+	t.Parallel()
+	// root config present, but collection def file is absent
+	fr := &fakeFileReader{
+		files: map[string][]byte{
+			".ingitdb/root-collections.yaml": []byte(rootConfigYAML),
+			// collection def intentionally omitted
+		},
+	}
+	_, err := readDefinitionFromGitHub(context.Background(), fr)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "collection definition not found") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestReadDefinitionFromGitHub_CollectionYAMLInvalid(t *testing.T) {
+	t.Parallel()
+	fr := &fakeFileReader{
+		files: map[string][]byte{
+			".ingitdb/root-collections.yaml":            []byte(rootConfigYAML),
+			"data/countries/.collection/countries.yaml": []byte("key: [\n"), // broken YAML
+		},
+	}
+	_, err := readDefinitionFromGitHub(context.Background(), fr)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "failed to parse collection def") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestReadDefinitionFromGitHub_SubscribersReadError(t *testing.T) {
+	t.Parallel()
+	fr := &fakeFileReader{
+		files: map[string][]byte{
+			".ingitdb/root-collections.yaml":            []byte(rootConfigYAML),
+			"data/countries/.collection/countries.yaml": []byte(countryColDefYAML),
+		},
+		readErrors: map[string]error{
+			".ingitdb/subscribers.yaml": fmt.Errorf("subscribers io error"),
+		},
+	}
+	_, err := readDefinitionFromGitHub(context.Background(), fr)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "failed to read subscribers config") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestReadDefinitionFromGitHub_SubscribersYAMLInvalid(t *testing.T) {
+	t.Parallel()
+	fr := &fakeFileReader{
+		files: map[string][]byte{
+			".ingitdb/root-collections.yaml":            []byte(rootConfigYAML),
+			"data/countries/.collection/countries.yaml": []byte(countryColDefYAML),
+			".ingitdb/subscribers.yaml":                 []byte("key: [\n"), // broken YAML
+		},
+	}
+	_, err := readDefinitionFromGitHub(context.Background(), fr)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "failed to parse subscribers config") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestReadDefinitionFromGitHub_SubscribersPresent(t *testing.T) {
+	t.Parallel()
+	fr := &fakeFileReader{
+		files: map[string][]byte{
+			".ingitdb/root-collections.yaml":            []byte(rootConfigYAML),
+			"data/countries/.collection/countries.yaml": []byte(countryColDefYAML),
+			".ingitdb/subscribers.yaml": []byte("subscribers:\n" +
+				"  webhook:\n" +
+				"    url: https://example.com/hook\n"),
+		},
+	}
+	def, err := readDefinitionFromGitHub(context.Background(), fr)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(def.Subscribers) == 0 {
+		t.Error("expected subscribers to be populated")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// readRecord – additional error paths
+// ---------------------------------------------------------------------------
+
+func TestReadRecord_MissingDB(t *testing.T) {
+	t.Parallel()
+	h, _ := newTestHandler()
+	req := httptest.NewRequest(http.MethodGet, "/ingitdb/v0/record?key=countries/ie", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", w.Code)
+	}
+}
+
+func TestReadRecord_DefReadError(t *testing.T) {
+	t.Parallel()
+	h, _ := newTestHandler()
+	h.newGitHubFileReader = func(cfg dalgo2ghingitdb.Config) (dalgo2ghingitdb.FileReader, error) {
+		return &fakeFileReader{files: map[string][]byte{}}, nil
+	}
+	req := httptest.NewRequest(http.MethodGet, "/ingitdb/v0/record?db=owner/repo&key=countries/ie", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d", w.Code)
+	}
+}
+
+func TestReadRecord_TxError(t *testing.T) {
+	t.Parallel()
+	s := newFakeStore(map[string]map[string]any{})
+	db := &fakeDB{s: s, readTxErr: fmt.Errorf("tx boom")}
+	h, _ := newTestHandler()
+	h.newGitHubDBWithDef = func(cfg dalgo2ghingitdb.Config, def *ingitdb.Definition) (dal.DB, error) {
+		return db, nil
+	}
+	req := httptest.NewRequest(http.MethodGet, "/ingitdb/v0/record?db=owner/repo&key=countries/ie", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "failed to read record") {
+		t.Errorf("unexpected body: %s", w.Body.String())
+	}
+}
+
+// ---------------------------------------------------------------------------
+// createRecord – additional error paths
+// ---------------------------------------------------------------------------
+
+func TestCreateRecord_MissingKey(t *testing.T) {
+	t.Parallel()
+	h, _ := newTestHandler()
+	req := httptest.NewRequest(http.MethodPost, "/ingitdb/v0/record?db=owner/repo",
+		strings.NewReader(`{"title":"X"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", w.Code)
+	}
+}
+
+func TestCreateRecord_MissingDB(t *testing.T) {
+	t.Parallel()
+	h, _ := newTestHandler()
+	req := httptest.NewRequest(http.MethodPost, "/ingitdb/v0/record?key=countries/de",
+		strings.NewReader(`{"title":"X"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", w.Code)
+	}
+}
+
+func TestCreateRecord_FileReaderError(t *testing.T) {
+	t.Parallel()
+	h, _ := newTestHandler()
+	h.newGitHubFileReader = func(cfg dalgo2ghingitdb.Config) (dalgo2ghingitdb.FileReader, error) {
+		return nil, fmt.Errorf("reader fail")
+	}
+	req := httptest.NewRequest(http.MethodPost, "/ingitdb/v0/record?db=owner/repo&key=countries/de",
+		strings.NewReader(`{"title":"X"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d", w.Code)
+	}
+}
+
+func TestCreateRecord_DefReadError(t *testing.T) {
+	t.Parallel()
+	h, _ := newTestHandler()
+	h.newGitHubFileReader = func(cfg dalgo2ghingitdb.Config) (dalgo2ghingitdb.FileReader, error) {
+		return &fakeFileReader{files: map[string][]byte{}}, nil
+	}
+	req := httptest.NewRequest(http.MethodPost, "/ingitdb/v0/record?db=owner/repo&key=countries/de",
+		strings.NewReader(`{"title":"X"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d", w.Code)
+	}
+}
+
+func TestCreateRecord_InvalidKey(t *testing.T) {
+	t.Parallel()
+	h, _ := newTestHandler()
+	req := httptest.NewRequest(http.MethodPost, "/ingitdb/v0/record?db=owner/repo&key=nonexistent/rec",
+		strings.NewReader(`{"title":"X"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", w.Code)
+	}
+}
+
+func TestCreateRecord_DBOpenError(t *testing.T) {
+	t.Parallel()
+	h, _ := newTestHandler()
+	h.newGitHubDBWithDef = func(cfg dalgo2ghingitdb.Config, def *ingitdb.Definition) (dal.DB, error) {
+		return nil, fmt.Errorf("db open fail")
+	}
+	req := httptest.NewRequest(http.MethodPost, "/ingitdb/v0/record?db=owner/repo&key=countries/de",
+		strings.NewReader(`{"title":"X"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d", w.Code)
+	}
+}
+
+func TestCreateRecord_TxError(t *testing.T) {
+	t.Parallel()
+	s := newFakeStore(map[string]map[string]any{})
+	db := &fakeDB{s: s, writeTxErr: fmt.Errorf("insert fail")}
+	h, _ := newTestHandler()
+	h.newGitHubDBWithDef = func(cfg dalgo2ghingitdb.Config, def *ingitdb.Definition) (dal.DB, error) {
+		return db, nil
+	}
+	req := httptest.NewRequest(http.MethodPost, "/ingitdb/v0/record?db=owner/repo&key=countries/de",
+		strings.NewReader(`{"title":"X"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "failed to create record") {
+		t.Errorf("unexpected body: %s", w.Body.String())
+	}
+}
+
+// ---------------------------------------------------------------------------
+// updateRecord – additional error paths
+// ---------------------------------------------------------------------------
+
+func TestUpdateRecord_MissingKey(t *testing.T) {
+	t.Parallel()
+	h, _ := newTestHandler()
+	req := httptest.NewRequest(http.MethodPut, "/ingitdb/v0/record?db=owner/repo",
+		strings.NewReader(`{"title":"X"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", w.Code)
+	}
+}
+
+func TestUpdateRecord_MissingDB(t *testing.T) {
+	t.Parallel()
+	h, _ := newTestHandler()
+	req := httptest.NewRequest(http.MethodPut, "/ingitdb/v0/record?key=countries/ie",
+		strings.NewReader(`{"title":"X"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", w.Code)
+	}
+}
+
+func TestUpdateRecord_InvalidJSON(t *testing.T) {
+	t.Parallel()
+	h, _ := newTestHandler()
+	req := httptest.NewRequest(http.MethodPut, "/ingitdb/v0/record?db=owner/repo&key=countries/ie",
+		strings.NewReader("not json"))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", w.Code)
+	}
+}
+
+func TestUpdateRecord_FileReaderError(t *testing.T) {
+	t.Parallel()
+	h, _ := newTestHandler()
+	h.newGitHubFileReader = func(cfg dalgo2ghingitdb.Config) (dalgo2ghingitdb.FileReader, error) {
+		return nil, fmt.Errorf("reader fail")
+	}
+	req := httptest.NewRequest(http.MethodPut, "/ingitdb/v0/record?db=owner/repo&key=countries/ie",
+		strings.NewReader(`{"title":"X"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d", w.Code)
+	}
+}
+
+func TestUpdateRecord_DefReadError(t *testing.T) {
+	t.Parallel()
+	h, _ := newTestHandler()
+	h.newGitHubFileReader = func(cfg dalgo2ghingitdb.Config) (dalgo2ghingitdb.FileReader, error) {
+		return &fakeFileReader{files: map[string][]byte{}}, nil
+	}
+	req := httptest.NewRequest(http.MethodPut, "/ingitdb/v0/record?db=owner/repo&key=countries/ie",
+		strings.NewReader(`{"title":"X"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d", w.Code)
+	}
+}
+
+func TestUpdateRecord_InvalidKey(t *testing.T) {
+	t.Parallel()
+	h, _ := newTestHandler()
+	req := httptest.NewRequest(http.MethodPut, "/ingitdb/v0/record?db=owner/repo&key=nonexistent/rec",
+		strings.NewReader(`{"title":"X"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", w.Code)
+	}
+}
+
+func TestUpdateRecord_DBOpenError(t *testing.T) {
+	t.Parallel()
+	h, _ := newTestHandler()
+	h.newGitHubDBWithDef = func(cfg dalgo2ghingitdb.Config, def *ingitdb.Definition) (dal.DB, error) {
+		return nil, fmt.Errorf("db open fail")
+	}
+	req := httptest.NewRequest(http.MethodPut, "/ingitdb/v0/record?db=owner/repo&key=countries/ie",
+		strings.NewReader(`{"title":"X"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d", w.Code)
+	}
+}
+
+// TestUpdateRecord_TxGetError covers the path where tx.Get() returns a
+// non-record-not-found error inside the update transaction.
+func TestUpdateRecord_TxGetError(t *testing.T) {
+	t.Parallel()
+	s := newFakeStore(map[string]map[string]any{
+		"countries/ie": {"title": "Ireland"},
+	})
+	db := &fakeDB{s: s, getTxErr: fmt.Errorf("get boom")}
+	h, _ := newTestHandler()
+	h.newGitHubDBWithDef = func(cfg dalgo2ghingitdb.Config, def *ingitdb.Definition) (dal.DB, error) {
+		return db, nil
+	}
+	req := httptest.NewRequest(http.MethodPut, "/ingitdb/v0/record?db=owner/repo&key=countries/ie",
+		strings.NewReader(`{"title":"Updated"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "failed to update record") {
+		t.Errorf("unexpected body: %s", w.Body.String())
+	}
+}
+
+// TestUpdateRecord_TxSetError covers the path where tx.Set() returns an error
+// after a successful Get (record exists).
+func TestUpdateRecord_TxSetError(t *testing.T) {
+	t.Parallel()
+	s := newFakeStore(map[string]map[string]any{
+		"countries/ie": {"title": "Ireland"},
+	})
+	db := &fakeDB{s: s, setErr: fmt.Errorf("set boom")}
+	h, _ := newTestHandler()
+	h.newGitHubDBWithDef = func(cfg dalgo2ghingitdb.Config, def *ingitdb.Definition) (dal.DB, error) {
+		return db, nil
+	}
+	req := httptest.NewRequest(http.MethodPut, "/ingitdb/v0/record?db=owner/repo&key=countries/ie",
+		strings.NewReader(`{"title":"Updated"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "failed to update record") {
+		t.Errorf("unexpected body: %s", w.Body.String())
+	}
+}
+
+// ---------------------------------------------------------------------------
+// deleteRecord – additional error paths
+// ---------------------------------------------------------------------------
+
+func TestDeleteRecord_MissingDB(t *testing.T) {
+	t.Parallel()
+	h, _ := newTestHandler()
+	req := httptest.NewRequest(http.MethodDelete, "/ingitdb/v0/record?key=countries/ie", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", w.Code)
+	}
+}
+
+func TestDeleteRecord_FileReaderError(t *testing.T) {
+	t.Parallel()
+	h, _ := newTestHandler()
+	h.newGitHubFileReader = func(cfg dalgo2ghingitdb.Config) (dalgo2ghingitdb.FileReader, error) {
+		return nil, fmt.Errorf("reader fail")
+	}
+	req := httptest.NewRequest(http.MethodDelete, "/ingitdb/v0/record?db=owner/repo&key=countries/ie", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d", w.Code)
+	}
+}
+
+func TestDeleteRecord_DefReadError(t *testing.T) {
+	t.Parallel()
+	h, _ := newTestHandler()
+	h.newGitHubFileReader = func(cfg dalgo2ghingitdb.Config) (dalgo2ghingitdb.FileReader, error) {
+		return &fakeFileReader{files: map[string][]byte{}}, nil
+	}
+	req := httptest.NewRequest(http.MethodDelete, "/ingitdb/v0/record?db=owner/repo&key=countries/ie", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d", w.Code)
+	}
+}
+
+func TestDeleteRecord_InvalidKey(t *testing.T) {
+	t.Parallel()
+	h, _ := newTestHandler()
+	req := httptest.NewRequest(http.MethodDelete, "/ingitdb/v0/record?db=owner/repo&key=nonexistent/rec", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", w.Code)
+	}
+}
+
+func TestDeleteRecord_DBOpenError(t *testing.T) {
+	t.Parallel()
+	h, _ := newTestHandler()
+	h.newGitHubDBWithDef = func(cfg dalgo2ghingitdb.Config, def *ingitdb.Definition) (dal.DB, error) {
+		return nil, fmt.Errorf("db open fail")
+	}
+	req := httptest.NewRequest(http.MethodDelete, "/ingitdb/v0/record?db=owner/repo&key=countries/ie", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d", w.Code)
+	}
+}
+
+func TestDeleteRecord_TxError(t *testing.T) {
+	t.Parallel()
+	s := newFakeStore(map[string]map[string]any{
+		"countries/ie": {"title": "Ireland"},
+	})
+	db := &fakeDB{s: s, writeTxErr: fmt.Errorf("delete fail")}
+	h, _ := newTestHandler()
+	h.newGitHubDBWithDef = func(cfg dalgo2ghingitdb.Config, def *ingitdb.Definition) (dal.DB, error) {
+		return db, nil
+	}
+	req := httptest.NewRequest(http.MethodDelete, "/ingitdb/v0/record?db=owner/repo&key=countries/ie", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "failed to delete record") {
+		t.Errorf("unexpected body: %s", w.Body.String())
+	}
+}
+
+// ---------------------------------------------------------------------------
+// requireAuth=true + no token: covers the `if !ok { return }` branch in each
+// handler (each handler's branch is counted separately by the coverage tool).
+// ---------------------------------------------------------------------------
+
+func TestReadRecord_RequireAuthNoToken(t *testing.T) {
+	t.Parallel()
+	h, _ := newTestHandler()
+	h.requireAuth = true
+	req := httptest.NewRequest(http.MethodGet, "/ingitdb/v0/record?db=owner/repo&key=countries/ie", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", w.Code)
+	}
+}
+
+func TestCreateRecord_RequireAuthNoToken(t *testing.T) {
+	t.Parallel()
+	h, _ := newTestHandler()
+	h.requireAuth = true
+	req := httptest.NewRequest(http.MethodPost, "/ingitdb/v0/record?db=owner/repo&key=countries/de",
+		strings.NewReader(`{"title":"X"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", w.Code)
+	}
+}
+
+func TestUpdateRecord_RequireAuthNoToken(t *testing.T) {
+	t.Parallel()
+	h, _ := newTestHandler()
+	h.requireAuth = true
+	req := httptest.NewRequest(http.MethodPut, "/ingitdb/v0/record?db=owner/repo&key=countries/ie",
+		strings.NewReader(`{"title":"X"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", w.Code)
+	}
+}
+
+func TestDeleteRecord_RequireAuthNoToken(t *testing.T) {
+	t.Parallel()
+	h, _ := newTestHandler()
+	h.requireAuth = true
+	req := httptest.NewRequest(http.MethodDelete, "/ingitdb/v0/record?db=owner/repo&key=countries/ie", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", w.Code)
+	}
 }

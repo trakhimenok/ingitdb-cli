@@ -32,6 +32,42 @@ func TestResolveTokenFromRequest_FallsBackToCookie(t *testing.T) {
 	}
 }
 
+func TestResolveTokenFromRequest_BearerWithWhitespaceOnlyToken(t *testing.T) {
+	t.Parallel()
+	// "Bearer   " should fall through to the cookie because the token is blank after trim.
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("Authorization", "Bearer   ")
+	req.AddCookie(&http.Cookie{Name: "ingitdb_github_token", Value: "cookie-fallback"})
+
+	got := ResolveTokenFromRequest(req, "ingitdb_github_token")
+	if got != "cookie-fallback" {
+		t.Fatalf("expected cookie fallback token, got %q", got)
+	}
+}
+
+func TestResolveTokenFromRequest_EmptyCookieName(t *testing.T) {
+	t.Parallel()
+	// No Authorization header, and cookieName is "": must return "".
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.AddCookie(&http.Cookie{Name: "ingitdb_github_token", Value: "cookie-token"})
+
+	got := ResolveTokenFromRequest(req, "")
+	if got != "" {
+		t.Fatalf("expected empty string, got %q", got)
+	}
+}
+
+func TestResolveTokenFromRequest_CookieNotFound(t *testing.T) {
+	t.Parallel()
+	// cookieName is set but no matching cookie exists: must return "".
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+
+	got := ResolveTokenFromRequest(req, "ingitdb_github_token")
+	if got != "" {
+		t.Fatalf("expected empty string, got %q", got)
+	}
+}
+
 func TestValidateGitHubToken(t *testing.T) {
 	t.Parallel()
 
@@ -88,6 +124,7 @@ func TestValidateGitHubToken(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			var client *http.Client
 			if tc.handler != nil {
 				client = &http.Client{

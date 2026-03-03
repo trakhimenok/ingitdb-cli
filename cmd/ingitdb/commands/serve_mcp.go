@@ -36,6 +36,15 @@ type deleteRecordArgs struct {
 	ID string `json:"id" jsonschema:"required,description=Record ID in format collection/path/key (e.g. countries/ie or todo.tags/abc)"`
 }
 
+// newMCPServerFn creates a new MCP server backed by the stdio transport.
+// It is a package-level variable so tests can replace it with a server
+// backed by a fake transport. Tests that replace it MUST NOT run in
+// parallel (same rule as the other seam variables in seams.go).
+var newMCPServerFn = func() *mcp.Server {
+	tr := stdio.NewStdioServerTransport()
+	return mcp.NewServer(tr, mcp.WithName("ingitdb"), mcp.WithVersion("1.0"))
+}
+
 func serveMCP(
 	ctx context.Context,
 	dirPath string,
@@ -44,8 +53,7 @@ func serveMCP(
 	logf func(...any),
 ) error {
 	_ = logf
-	tr := stdio.NewStdioServerTransport()
-	server := mcp.NewServer(tr, mcp.WithName("ingitdb"), mcp.WithVersion("1.0"))
+	server := newMCPServerFn()
 	if err := registerMCPTools(server, dirPath, readDefinition, newDB); err != nil {
 		return err
 	}

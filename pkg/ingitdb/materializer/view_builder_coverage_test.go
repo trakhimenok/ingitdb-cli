@@ -874,7 +874,7 @@ func TestBuildDefaultView_IncludeHash(t *testing.T) {
 		ingitdb.NewMapRecordEntry("1", map[string]any{"id": "1", "name": "Widget"}),
 	}
 
-	created, _, _, errs := buildDefaultView(tmpDir, "", col, &ingitdb.Definition{}, view, records, nil)
+	created, _, _, errs := buildDefaultView(tmpDir, "", col, &ingitdb.Definition{}, view, records, nil, defaultFSops())
 	if len(errs) > 0 {
 		t.Fatalf("buildDefaultView: %v", errs)
 	}
@@ -913,7 +913,7 @@ func TestBuildDefaultView_LogfCalledOnCreated(t *testing.T) {
 	logCalls := 0
 	logf := func(format string, args ...any) { logCalls++ }
 
-	created, _, _, errs := buildDefaultView(tmpDir, "", col, &ingitdb.Definition{}, view, records, logf)
+	created, _, _, errs := buildDefaultView(tmpDir, "", col, &ingitdb.Definition{}, view, records, logf, defaultFSops())
 	if len(errs) > 0 {
 		t.Fatalf("buildDefaultView: %v", errs)
 	}
@@ -944,7 +944,7 @@ func TestBuildDefaultView_LogfCalledOnUnchanged(t *testing.T) {
 	}
 
 	// First run: create the file (no logf needed).
-	_, _, _, errs := buildDefaultView(tmpDir, "", col, &ingitdb.Definition{}, view, records, nil)
+	_, _, _, errs := buildDefaultView(tmpDir, "", col, &ingitdb.Definition{}, view, records, nil, defaultFSops())
 	if len(errs) > 0 {
 		t.Fatalf("first buildDefaultView: %v", errs)
 	}
@@ -953,7 +953,7 @@ func TestBuildDefaultView_LogfCalledOnUnchanged(t *testing.T) {
 	logCalls := 0
 	logf := func(format string, args ...any) { logCalls++ }
 
-	_, _, unchanged, errs := buildDefaultView(tmpDir, "", col, &ingitdb.Definition{}, view, records, logf)
+	_, _, unchanged, errs := buildDefaultView(tmpDir, "", col, &ingitdb.Definition{}, view, records, logf, defaultFSops())
 	if len(errs) > 0 {
 		t.Fatalf("second buildDefaultView: %v", errs)
 	}
@@ -987,7 +987,7 @@ func TestBuildDefaultView_LogfCalledOnUpdated(t *testing.T) {
 	}
 
 	// First run: create the file.
-	_, _, _, errs := buildDefaultView(tmpDir, "", col, &ingitdb.Definition{}, view, records1, nil)
+	_, _, _, errs := buildDefaultView(tmpDir, "", col, &ingitdb.Definition{}, view, records1, nil, defaultFSops())
 	if len(errs) > 0 {
 		t.Fatalf("first buildDefaultView: %v", errs)
 	}
@@ -996,7 +996,7 @@ func TestBuildDefaultView_LogfCalledOnUpdated(t *testing.T) {
 	logCalls := 0
 	logf := func(format string, args ...any) { logCalls++ }
 
-	_, updated, _, errs := buildDefaultView(tmpDir, "", col, &ingitdb.Definition{}, view, records2, logf)
+	_, updated, _, errs := buildDefaultView(tmpDir, "", col, &ingitdb.Definition{}, view, records2, logf, defaultFSops())
 	if len(errs) > 0 {
 		t.Fatalf("second buildDefaultView: %v", errs)
 	}
@@ -1031,7 +1031,7 @@ func TestBuildDefaultView_FormatError(t *testing.T) {
 		ingitdb.RecordEntry{ID: "1", Data: map[string]any{"id": "1", "bad": make(chan int)}},
 	}
 
-	_, _, _, errs := buildDefaultView(tmpDir, "", col, &ingitdb.Definition{}, view, records, nil)
+	_, _, _, errs := buildDefaultView(tmpDir, "", col, &ingitdb.Definition{}, view, records, nil, defaultFSops())
 	if len(errs) == 0 {
 		t.Fatal("expected format error for unmarshalable channel value, got none")
 	}
@@ -1070,7 +1070,7 @@ func TestBuildFKViews_FormatError(t *testing.T) {
 		ingitdb.RecordEntry{ID: "1", Data: map[string]any{"id": "1", "customer": "alice", "bad": make(chan int)}},
 	}
 
-	_, _, _, errs := buildFKViews(tmpDir, "", col, def, view, records, nil)
+	_, _, _, errs := buildFKViews(tmpDir, "", col, def, view, records, nil, defaultFSops())
 	if len(errs) == 0 {
 		t.Fatal("expected format error for unmarshalable channel value in FK view, got none")
 	}

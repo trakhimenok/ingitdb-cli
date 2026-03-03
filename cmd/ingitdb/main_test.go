@@ -424,6 +424,54 @@ func TestRun_AllCommands(t *testing.T) {
 	}
 }
 
+func TestRun_ReadRecord_ExercisesNewDB(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+
+	// Write a record file for the local filesystem DB.
+	recordContent := []byte("name: hello\n")
+	if err := os.WriteFile(dir+"/r1.yaml", recordContent, 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	readDefinition := func(_ string, _ ...ingitdb.ReadOption) (*ingitdb.Definition, error) {
+		return &ingitdb.Definition{
+			Collections: map[string]*ingitdb.CollectionDef{
+				"test.items": {
+					ID:      "test.items",
+					DirPath: dir,
+					RecordFile: &ingitdb.RecordFileDef{
+						Name:       "{key}.yaml",
+						Format:     "yaml",
+						RecordType: ingitdb.SingleRecord,
+					},
+					Columns: map[string]*ingitdb.ColumnDef{
+						"name": {Type: ingitdb.ColumnTypeString},
+					},
+				},
+			},
+		}, nil
+	}
+	fatalCalled := false
+	fatal := func(err error) {
+		fatalCalled = true
+		t.Logf("fatal: %v", err)
+	}
+	homeDir := func() (string, error) { return "/tmp/home", nil }
+	getWd := func() (string, error) { return dir, nil }
+	logf := func(...any) {}
+
+	// Running `read record` exercises newDB → dalgo2fsingitdb.NewLocalDBWithDef.
+	run(
+		[]string{"ingitdb", "read", "record", "--path=" + dir, "--id=test.items/r1"},
+		homeDir, getWd, readDefinition, fatal, logf,
+	)
+	if fatalCalled {
+		t.Fatal("fatal should not be called")
+	}
+}
+
 func TestRun_GetWdError(t *testing.T) {
 	t.Parallel()
 

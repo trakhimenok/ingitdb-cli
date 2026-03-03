@@ -2,6 +2,7 @@ package auth
 
 import (
 	"fmt"
+	"net/http"
 	"os"
 	"strconv"
 	"strings"
@@ -24,6 +25,14 @@ type Config struct {
 	CookieName         string
 	CookieSecure       bool
 	AuthAPIBaseURL     string
+
+	// tokenExchangeURL overrides the GitHub token-exchange endpoint.
+	// Leave empty to use the real GitHub URL. Populated only in tests.
+	tokenExchangeURL string
+
+	// defaultHTTPClient is used when ExchangeCodeForToken receives a nil httpClient.
+	// Leave nil to fall back to http.DefaultClient. Populated only in tests.
+	defaultHTTPClient *http.Client
 }
 
 // LoadConfigFromEnv loads authentication settings from environment variables.

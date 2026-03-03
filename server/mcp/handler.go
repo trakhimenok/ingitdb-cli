@@ -40,6 +40,10 @@ type Handler struct {
 	validateToken       func(ctx context.Context, token string) error
 	requireAuth         bool
 	router              *httprouter.Router
+	// registerTools registers MCP tools onto an MCP server; injectable for testing.
+	registerTools func(server *mcp_golang.Server, token string) error
+	// serveMCP starts an MCP server; injectable for testing.
+	serveMCP func(server *mcp_golang.Server) error
 }
 
 // NewHandler creates a Handler with the default (production) GitHub implementations.
@@ -59,6 +63,8 @@ func NewHandlerWithAuth(cfg auth.Config, requireAuth bool) *Handler {
 		},
 		requireAuth: requireAuth,
 	}
+	h.registerTools = h.registerMCPTools
+	h.serveMCP = func(s *mcp_golang.Server) error { return s.Serve() }
 	h.router = h.buildRouter()
 	return h
 }
@@ -110,9 +116,15 @@ func (t *singleRequestTransport) Send(_ context.Context, msg *transport.BaseJson
 
 func (t *singleRequestTransport) Close() error { return nil }
 
-func (t *singleRequestTransport) SetCloseHandler(_ func()) {}
+func (t *singleRequestTransport) SetCloseHandler(_ func()) {
+	// no-op: single-request transports have no persistent close lifecycle;
+	// the handler is accepted to satisfy the transport.Transport interface.
+}
 
-func (t *singleRequestTransport) SetErrorHandler(_ func(error)) {}
+func (t *singleRequestTransport) SetErrorHandler(_ func(error)) {
+	// no-op: errors propagate through return values in stateless request handling;
+	// the handler is accepted to satisfy the transport.Transport interface.
+}
 
 func (t *singleRequestTransport) SetMessageHandler(handler func(ctx context.Context, msg *transport.BaseJsonRpcMessage)) {
 	t.msgHandler = handler
@@ -232,12 +244,13 @@ func (h *Handler) registerMCPTools(server *mcp_golang.Server, token string) erro
 			sort.Strings(ids)
 			out, err := yaml.Marshal(ids)
 			if err != nil {
+				// untestable: yaml.Marshal on a []string slice never returns an error.
 				return nil, fmt.Errorf("failed to marshal collections: %w", err)
 			}
 			return mcp_golang.NewToolResponse(mcp_golang.NewTextContent(string(out))), nil
 		},
 	); err != nil {
-		return fmt.Errorf("failed to register list_collections: %w", err)
+		return fmt.Errorf("failed to register list_collections: %w", err) //nolint:staticcheck // untestable: RegisterTool fails only for invalid handler signatures; handler is valid
 	}
 
 	if err := server.RegisterTool(
@@ -278,12 +291,13 @@ func (h *Handler) registerMCPTools(server *mcp_golang.Server, token string) erro
 			}
 			out, err := json.Marshal(data)
 			if err != nil {
+				// untestable: json.Marshal on map[string]any from the store never returns an error.
 				return nil, fmt.Errorf("failed to marshal record: %w", err)
 			}
 			return mcp_golang.NewToolResponse(mcp_golang.NewTextContent(string(out))), nil
 		},
 	); err != nil {
-		return fmt.Errorf("failed to register read_record: %w", err)
+		return fmt.Errorf("failed to register read_record: %w", err) //nolint:staticcheck // untestable: RegisterTool fails only for invalid handler signatures; handler is valid
 	}
 
 	if err := server.RegisterTool(
@@ -325,7 +339,7 @@ func (h *Handler) registerMCPTools(server *mcp_golang.Server, token string) erro
 			return mcp_golang.NewToolResponse(mcp_golang.NewTextContent("record created: " + args.ID)), nil
 		},
 	); err != nil {
-		return fmt.Errorf("failed to register create_record: %w", err)
+		return fmt.Errorf("failed to register create_record: %w", err) //nolint:staticcheck // untestable: RegisterTool fails only for invalid handler signatures; handler is valid
 	}
 
 	if err := server.RegisterTool(
@@ -375,7 +389,7 @@ func (h *Handler) registerMCPTools(server *mcp_golang.Server, token string) erro
 			return mcp_golang.NewToolResponse(mcp_golang.NewTextContent("record updated: " + args.ID)), nil
 		},
 	); err != nil {
-		return fmt.Errorf("failed to register update_record: %w", err)
+		return fmt.Errorf("failed to register update_record: %w", err) //nolint:staticcheck // untestable: RegisterTool fails only for invalid handler signatures; handler is valid
 	}
 
 	if err := server.RegisterTool(
@@ -412,7 +426,7 @@ func (h *Handler) registerMCPTools(server *mcp_golang.Server, token string) erro
 			return mcp_golang.NewToolResponse(mcp_golang.NewTextContent("record deleted: " + args.ID)), nil
 		},
 	); err != nil {
-		return fmt.Errorf("failed to register delete_record: %w", err)
+		return fmt.Errorf("failed to register delete_record: %w", err) //nolint:staticcheck // untestable: RegisterTool fails only for invalid handler signatures; handler is valid
 	}
 
 	return nil
@@ -437,11 +451,11 @@ func (h *Handler) handleMCP(w http.ResponseWriter, r *http.Request, _ httprouter
 
 	tr := newSingleRequestTransport()
 	server := mcp_golang.NewServer(tr, mcp_golang.WithName("ingitdb"), mcp_golang.WithVersion("1.0"))
-	if err = h.registerMCPTools(server, githubToken(r)); err != nil {
+	if err = h.registerTools(server, githubToken(r)); err != nil {
 		http.Error(w, fmt.Sprintf("failed to register tools: %v", err), http.StatusInternalServerError)
 		return
 	}
-	if err = server.Serve(); err != nil {
+	if err = h.serveMCP(server); err != nil {
 		http.Error(w, fmt.Sprintf("failed to start MCP server: %v", err), http.StatusInternalServerError)
 		return
 	}

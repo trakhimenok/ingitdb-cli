@@ -1,10 +1,20 @@
 package dalgo2fsingitdb
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
 )
+
+// errYAMLMarshalerValue implements yaml.Marshaler and always returns an error.
+// This is used to reach the `yaml.Marshal` error-return branch in writeRecordToFile
+// without triggering the yaml library's panic path for unsupported Go types.
+type errYAMLMarshalerValue struct{}
+
+func (errYAMLMarshalerValue) MarshalYAML() (interface{}, error) {
+	return nil, fmt.Errorf("intentional yaml marshal error")
+}
 
 func TestReadRecordFromFile_UnsupportedFormat(t *testing.T) {
 	t.Parallel()
@@ -289,5 +299,29 @@ func TestWriteRecordToFile_JSONFormat(t *testing.T) {
 	// Verify JSON is formatted with newline at end
 	if content[len(content)-1] != '\n' {
 		t.Error("expected JSON file to end with newline")
+	}
+}
+
+// TestWriteRecordToFile_YAMLMarshalerReturnsError covers the
+// `return fmt.Errorf("failed to marshal data as YAML: %w", err)` branch.
+// The errYAMLMarshalerValue type implements yaml.Marshaler and returns an
+// error, which causes yaml.Marshal to propagate the error instead of
+// panicking (unlike passing an unsupported Go type such as a function).
+func TestWriteRecordToFile_YAMLMarshalerReturnsError(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.yaml")
+	data := map[string]any{
+		"key": errYAMLMarshalerValue{},
+	}
+
+	err := writeRecordToFile(path, "yaml", data)
+	if err == nil {
+		t.Fatal("expected YAML marshal error, got nil")
+	}
+	const prefix = "failed to marshal data as YAML:"
+	if len(err.Error()) < len(prefix) || err.Error()[:len(prefix)] != prefix {
+		t.Errorf("error = %q, want prefix %q", err.Error(), prefix)
 	}
 }

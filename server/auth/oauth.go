@@ -36,8 +36,13 @@ func (c Config) ExchangeCodeForToken(ctx context.Context, code string, httpClien
 	values.Set("code", code)
 	values.Set("redirect_uri", c.CallbackURL)
 
+	exchangeURL := c.tokenExchangeURL
+	if exchangeURL == "" {
+		exchangeURL = "https://github.com/login/oauth/access_token"
+	}
+
 	requestBody := strings.NewReader(values.Encode())
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://github.com/login/oauth/access_token", requestBody)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, exchangeURL, requestBody)
 	if err != nil {
 		return "", fmt.Errorf("failed to build token request: %w", err)
 	}
@@ -46,7 +51,11 @@ func (c Config) ExchangeCodeForToken(ctx context.Context, code string, httpClien
 
 	client := httpClient
 	if client == nil {
-		client = http.DefaultClient
+		if c.defaultHTTPClient != nil {
+			client = c.defaultHTTPClient
+		} else {
+			client = http.DefaultClient
+		}
 	}
 	resp, err := client.Do(req)
 	if err != nil {

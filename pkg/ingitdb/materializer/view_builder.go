@@ -12,12 +12,51 @@ import (
 	"github.com/ingitdb/ingitdb-cli/pkg/ingitdb"
 )
 
+// fsOps groups the file-system primitives used by buildDefaultView and buildFKViews.
+// The zero value is valid: nil fields are replaced with the real OS functions by
+// SimpleViewBuilder.fsOpsOrDefault before being passed into those helpers.
+type fsOps struct {
+	mkdirAll  func(string, os.FileMode) error
+	readFile  func(string) ([]byte, error)
+	writeFile func(string, []byte, os.FileMode) error
+}
+
 // SimpleViewBuilder materializes view outputs using injected dependencies.
 type SimpleViewBuilder struct {
 	DefReader     ViewDefReader
 	RecordsReader ingitdb.RecordsReader
 	Writer        ViewWriter
 	Logf          func(format string, args ...any)
+	// fs holds injected file-system operations; nil fields default to the real OS
+	// functions. Tests set individual fields to stub out I/O error paths.
+	fs fsOps
+}
+
+// fsOpsOrDefault returns a fsOps where every nil field has been replaced with the
+// corresponding real OS function so callers never have to nil-check.
+func (b SimpleViewBuilder) fsOpsOrDefault() fsOps {
+	f := b.fs
+	if f.mkdirAll == nil {
+		f.mkdirAll = os.MkdirAll
+	}
+	if f.readFile == nil {
+		f.readFile = os.ReadFile
+	}
+	if f.writeFile == nil {
+		f.writeFile = os.WriteFile
+	}
+	return f
+}
+
+// defaultFSops returns an fsOps that delegates to the real OS functions.
+// Used by tests that call buildDefaultView/buildFKViews directly and want
+// the standard production behaviour without stubbing any file-system operations.
+func defaultFSops() fsOps {
+	return fsOps{
+		mkdirAll:  os.MkdirAll,
+		readFile:  os.ReadFile,
+		writeFile: os.WriteFile,
+	}
 }
 
 func (b SimpleViewBuilder) BuildViews(
@@ -47,6 +86,7 @@ func (b SimpleViewBuilder) BuildViews(
 		dv.IsDefault = true
 		views[ingitdb.DefaultViewID] = &dv
 	}
+	fs := b.fsOpsOrDefault()
 	result := &ingitdb.MaterializeResult{}
 	for _, view := range views {
 		records, err := readAllRecords(ctx, b.RecordsReader, dbPath, col)
@@ -56,13 +96,13 @@ func (b SimpleViewBuilder) BuildViews(
 
 		if view.IsDefault {
 			// Handle default view export
-			created, updated, unchanged, errs := buildDefaultView(dbPath, repoRoot, col, def, view, records, b.Logf)
+			created, updated, unchanged, errs := buildDefaultView(dbPath, repoRoot, col, def, view, records, b.Logf, fs)
 			result.FilesCreated += created
 			result.FilesUpdated += updated
 			result.FilesUnchanged += unchanged
 			result.Errors = append(result.Errors, errs...)
 			// Generate FK-filtered views for every FK column.
-			fkCreated, fkUpdated, fkUnchanged, fkErrs := buildFKViews(dbPath, repoRoot, col, def, view, records, b.Logf)
+			fkCreated, fkUpdated, fkUnchanged, fkErrs := buildFKViews(dbPath, repoRoot, col, def, view, records, b.Logf, fs)
 			result.FilesCreated += fkCreated
 			result.FilesUpdated += fkUpdated
 			result.FilesUnchanged += fkUnchanged
@@ -121,14 +161,15 @@ func (b SimpleViewBuilder) BuildView(
 	}
 
 	if view.IsDefault {
+		fs := b.fsOpsOrDefault()
 		// Handle default view export
-		created, updated, unchanged, errs := buildDefaultView(dbPath, repoRoot, col, def, view, records, b.Logf)
+		created, updated, unchanged, errs := buildDefaultView(dbPath, repoRoot, col, def, view, records, b.Logf, fs)
 		result.FilesCreated += created
 		result.FilesUpdated += updated
 		result.FilesUnchanged += unchanged
 		result.Errors = append(result.Errors, errs...)
 		// Generate FK-filtered views for every FK column.
-		fkCreated, fkUpdated, fkUnchanged, fkErrs := buildFKViews(dbPath, repoRoot, col, def, view, records, b.Logf)
+		fkCreated, fkUpdated, fkUnchanged, fkErrs := buildFKViews(dbPath, repoRoot, col, def, view, records, b.Logf, fs)
 		result.FilesCreated += fkCreated
 		result.FilesUpdated += fkUpdated
 		result.FilesUnchanged += fkUnchanged
@@ -206,7 +247,7 @@ func filterColumns(records []ingitdb.IRecordEntry, cols []string) []ingitdb.IRec
 	return filtered
 }
 
-func buildDefaultView(dbPath string, repoRoot string, col *ingitdb.CollectionDef, def *ingitdb.Definition, view *ingitdb.ViewDef, records []ingitdb.IRecordEntry, logf func(string, ...any)) (created, updated, unchanged int, errs []error) {
+func buildDefaultView(dbPath string, repoRoot string, col *ingitdb.CollectionDef, def *ingitdb.Definition, view *ingitdb.ViewDef, records []ingitdb.IRecordEntry, logf func(string, ...any), fs fsOps) (created, updated, unchanged int, errs []error) {
 	columns := determineColumns(col, view)
 	format := strings.ToLower(view.Format)
 	if format == "" {
@@ -272,12 +313,12 @@ func buildDefaultView(dbPath string, repoRoot string, col *ingitdb.CollectionDef
 		relColPath, _ := filepath.Rel(outputRoot, col.DirPath)
 		outPath := filepath.Join(outputRoot, ingitdb.IngitdbDir, relColPath, fileName)
 
-		if err := os.MkdirAll(filepath.Dir(outPath), 0o755); err != nil {
-			errs = append(errs, fmt.Errorf("mkdir for %s: %w", outPath, err)) // untestable: os.MkdirAll called directly without injection
+		if err := fs.mkdirAll(filepath.Dir(outPath), 0o755); err != nil {
+			errs = append(errs, fmt.Errorf("mkdir for %s: %w", outPath, err))
 			continue
 		}
 
-		existing, readErr := os.ReadFile(outPath)
+		existing, readErr := fs.readFile(outPath)
 		if readErr == nil && bytes.Equal(existing, content) {
 			unchanged++
 			if logf != nil {
@@ -287,8 +328,8 @@ func buildDefaultView(dbPath string, repoRoot string, col *ingitdb.CollectionDef
 			continue
 		}
 
-		if err := os.WriteFile(outPath, content, 0o644); err != nil {
-			errs = append(errs, fmt.Errorf("write %s: %w", outPath, err)) // untestable: os.WriteFile called directly without injection
+		if err := fs.writeFile(outPath, content, 0o644); err != nil {
+			errs = append(errs, fmt.Errorf("write %s: %w", outPath, err))
 			continue
 		}
 		if readErr == nil {
@@ -312,6 +353,7 @@ func buildFKViews(
 	col *ingitdb.CollectionDef, def *ingitdb.Definition,
 	view *ingitdb.ViewDef, records []ingitdb.IRecordEntry,
 	logf func(string, ...any),
+	fs fsOps,
 ) (created, updated, unchanged int, errs []error) {
 	columns := col.Columns
 	if len(columns) == 0 {
@@ -399,12 +441,12 @@ func buildFKViews(
 
 			outPath := filepath.Join(outputRoot, ingitdb.IngitdbDir, referredRelColPath, "$fk", col.ID, colName, fkValue+"."+ext)
 
-			if err := os.MkdirAll(filepath.Dir(outPath), 0o755); err != nil {
+			if err := fs.mkdirAll(filepath.Dir(outPath), 0o755); err != nil {
 				errs = append(errs, fmt.Errorf("buildFKViews %s/%s: mkdir: %w", colName, fkValue, err))
 				continue
 			}
 
-			existing, readErr := os.ReadFile(outPath)
+			existing, readErr := fs.readFile(outPath)
 			if readErr == nil && bytes.Equal(existing, content) {
 				unchanged++
 				if logf != nil {
@@ -414,7 +456,7 @@ func buildFKViews(
 				continue
 			}
 
-			if err := os.WriteFile(outPath, content, 0o644); err != nil {
+			if err := fs.writeFile(outPath, content, 0o644); err != nil {
 				errs = append(errs, fmt.Errorf("buildFKViews %s/%s: write: %w", colName, fkValue, err))
 				continue
 			}
