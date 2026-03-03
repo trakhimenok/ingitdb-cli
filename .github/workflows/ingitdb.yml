@@ -30,13 +30,25 @@ jobs:
       - name: inGitDB CI
         run: ./ingitdb ci
 
-      - name: Commit materialized views
+      - name: Configure git
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git diff --cached --quiet || git commit -m "chore: update materialized views [skip ci]"
+
+      - name: Stage materialized views
+        run: git add -A
+
+      - name: Commit materialized views
+        id: commit
+        run: |
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+            echo "changed=false" >> $GITHUB_OUTPUT
+          else
+            git commit -m "chore: update materialized views [skip ci]"
+            echo "changed=true" >> $GITHUB_OUTPUT
+          fi
 
       - name: Push materialized views
+        if: steps.commit.outputs.changed == 'true' && github.event_name == 'push'
         run: git push
-        if: github.event_name == 'push'
