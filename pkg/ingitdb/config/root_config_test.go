@@ -1029,3 +1029,84 @@ func TestReadRootConfigFromFile_PanicRecovery(t *testing.T) {
 		t.Fatalf("expected panic error, got %s", errMsg)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// ResolveNamespaceImports — public method (delegates to resolveNamespaceImports)
+// ---------------------------------------------------------------------------
+
+func TestResolveNamespaceImports_PublicMethod_EmptyCollections(t *testing.T) {
+	t.Parallel()
+
+	rc := &RootConfig{RootCollections: map[string]string{}}
+	err := rc.ResolveNamespaceImports(".")
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+}
+
+func TestResolveNamespaceImports_PublicMethod_NoNamespaceKeys(t *testing.T) {
+	t.Parallel()
+
+	rc := &RootConfig{RootCollections: map[string]string{
+		"foo": "path/to/foo",
+	}}
+	err := rc.ResolveNamespaceImports(".")
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if rc.RootCollections["foo"] != "path/to/foo" {
+		t.Errorf("expected foo path to remain unchanged")
+	}
+}
+
+func TestResolveNamespaceImports_PublicMethod_SuccessfulImport(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	subDir := filepath.Join(dir, "sub")
+	if err := os.MkdirAll(subDir, 0o755); err != nil {
+		t.Fatalf("setup: mkdir sub: %v", err)
+	}
+	writeIngitDBFile(t, subDir, RootCollectionsFileName, []byte("tasks: tasks\n"))
+
+	rc := &RootConfig{RootCollections: map[string]string{
+		"proj.*": "sub",
+	}}
+
+	err := rc.ResolveNamespaceImports(dir)
+	if err != nil {
+		t.Fatalf("ResolveNamespaceImports() unexpected error: %v", err)
+	}
+
+	if _, ok := rc.RootCollections["proj.*"]; ok {
+		t.Error("namespace import key should have been removed")
+	}
+	if got, ok := rc.RootCollections["proj.tasks"]; !ok {
+		t.Error("expected proj.tasks to be imported")
+	} else {
+		want := filepath.Join("sub", "tasks")
+		if got != want {
+			t.Errorf("proj.tasks path = %q, want %q", got, want)
+		}
+	}
+}
+
+func TestResolveNamespaceImports_PublicMethod_DirectoryNotFound(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	rc := &RootConfig{RootCollections: map[string]string{
+		"ns.*": "nonexistent-dir",
+	}}
+
+	err := rc.ResolveNamespaceImports(dir)
+	if err == nil {
+		t.Fatal("expected error for missing directory, got nil")
+	}
+	if !strings.Contains(err.Error(), "namespace import directory not found") {
+		t.Errorf("expected 'namespace import directory not found', got %q", err.Error())
+	}
+}
+
+// Verify _ ingitdb import is not unused
+var _ = ingitdb.NewReadOptions
