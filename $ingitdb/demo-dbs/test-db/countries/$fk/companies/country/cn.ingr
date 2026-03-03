@@ -1,0 +1,12 @@
+# INGR.io | countries/$fk/companies/country/cn: $ID:string, country:string, industry:string, title:string
+"alibaba"
+"cn"
+"Technology"
+"Alibaba Group"
+#-
+"tencent"
+"cn"
+"Technology"
+"Tencent"
+#-
+# 2 records

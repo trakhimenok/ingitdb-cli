@@ -1,4 +1,4 @@
-# INGR.io | companies/$fk_country/countries/mx: $ID:string, country:string, industry:string, title:string
+# INGR.io | countries/$fk/companies/country/mx: $ID:string, country:string, industry:string, title:string
 "america-movil"
 "mx"
 "Telecommunications"

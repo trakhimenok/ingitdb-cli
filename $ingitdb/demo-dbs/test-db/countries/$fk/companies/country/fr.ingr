@@ -1,4 +1,4 @@
-# INGR.io | companies/$fk_country/countries/fr: $ID:string, country:string, industry:string, title:string
+# INGR.io | countries/$fk/companies/country/fr: $ID:string, country:string, industry:string, title:string
 "lvmh"
 "fr"
 "Luxury Goods"

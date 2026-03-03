@@ -1,4 +1,4 @@
-# INGR.io | companies/$fk_country/countries/it: $ID:string, country:string, industry:string, title:string
+# INGR.io | countries/$fk/companies/country/it: $ID:string, country:string, industry:string, title:string
 "essilorluxottica"
 "it"
 "Healthcare"

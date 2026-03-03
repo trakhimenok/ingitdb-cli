@@ -1,4 +1,4 @@
-# INGR.io | companies/$fk_country/countries/us: $ID:string, country:string, industry:string, title:string
+# INGR.io | countries/$fk/companies/country/us: $ID:string, country:string, industry:string, title:string
 "acme-inc"
 "us"
 "Manufacturing"
