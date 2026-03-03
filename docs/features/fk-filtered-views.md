@@ -37,7 +37,10 @@ query engine.
 - A collection with **multiple FK columns** produces independent subtrees under each referred
   collection's `$fk/{col.ID}/` directory, one subdirectory per FK field name.
 - FK view files use **the same column set** (determined by `determineColumns(col, view)`) and the
-  **same format** as the collection's `default_view`.
+  **same format** as the collection's `default_view`, **with the FK column itself excluded** — its
+  value is identical for every record in the file, so including it wastes space and bandwidth.
+  Example: `countries/$fk/companies/country/gb.ingr` will contain `$ID:string, name:string` but
+  **not** `country:string`.
 - FK view files include the same INGR header with column-type annotations (i.e. `WithColumnTypes(col)`
   is applied) as the regular default view; `WithRecordsDelimiter` and `WithHash` are applied using
   the same cascade logic as `buildDefaultView`.
@@ -99,6 +102,16 @@ query engine.
 - Reuse `determineColumns`, `defaultViewFormatExtension`, `formatExportBatch`, and
   `WithColumnTypes(col)` exactly as in `buildDefaultView`; apply `RecordsDelimiter` and
   `IncludeHash` with the same cascade logic.
+- **Exclude the FK column from the export columns** — strip `colName` from the column list before
+  serializing, since every record in the file shares the same value:
+  ```go
+  fkExportColumns := make([]string, 0, len(exportColumns))
+  for _, c := range exportColumns {
+      if c != colName {
+          fkExportColumns = append(fkExportColumns, c)
+      }
+  }
+  ```
 - The `viewName` argument passed to `formatExportBatch`:
   `colDef.ForeignKey + "/$fk/" + col.ID + "/" + colName + "/" + fkValue`.
 - Idempotency: read existing file before writing; skip and increment `unchanged` when content is
@@ -111,6 +124,8 @@ query engine.
   `[{id:"acme",country:"gb"}, {id:"shopify",country:"ca"}, {id:"bmo",country:"ca"}]` →
   `countries/$fk/companies/country/gb.ingr` (1 record),
   `countries/$fk/companies/country/ca.ingr` (2 records), `created == 2`.
+- **FK column excluded from output:** `countries/$fk/companies/country/gb.ingr` contains
+  `$ID:string, name:string` in the header but **not** `country:string`.
 - **Null/empty FK value is skipped:** records `[{country:"us"}, {country:""}, {country:nil}]` →
   only `us.ingr` written, `created == 1`.
 - **Multiple FK columns produce independent subtrees:** collection with both

@@ -356,6 +356,15 @@ func buildFKViews(
 		}
 		referredRelColPath, _ := filepath.Rel(outputRoot, referredColDef.DirPath)
 
+		// Exclude the FK column itself — its value is constant for every record in
+		// the file (it equals fkValue), so including it wastes space and bandwidth.
+		fkExportColumns := make([]string, 0, len(exportColumns))
+		for _, c := range exportColumns {
+			if c != colName {
+				fkExportColumns = append(fkExportColumns, c)
+			}
+		}
+
 		// Group records by FK value; skip nil/empty.
 		groups := make(map[string][]ingitdb.IRecordEntry)
 		for _, rec := range records {
@@ -376,7 +385,7 @@ func buildFKViews(
 
 		for fkValue, fkRecords := range groups {
 			viewName := colDef.ForeignKey + "/$fk/" + col.ID + "/" + colName + "/" + fkValue
-			content, err := formatExportBatch(format, viewName, exportColumns, fkRecords, exportOpts...)
+			content, err := formatExportBatch(format, viewName, fkExportColumns, fkRecords, exportOpts...)
 			if err != nil {
 				errs = append(errs, fmt.Errorf("buildFKViews %s/%s: format: %w", colName, fkValue, err))
 				continue

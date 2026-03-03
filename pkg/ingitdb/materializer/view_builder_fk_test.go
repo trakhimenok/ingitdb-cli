@@ -439,7 +439,60 @@ func TestBuildFKViews_ViewNameInINGRHeader(t *testing.T) {
 	}
 }
 
-// TestBuildFKViews_ErrorAccumulation verifies that a write failure for one FK value does not
+// TestBuildFKViews_FKColumnExcludedFromOutput verifies that the FK column (referring field)
+// is not present in the output file — its value is constant for all records in the file, so
+// including it wastes space and bandwidth.
+func TestBuildFKViews_FKColumnExcludedFromOutput(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	col := makeCompaniesCol(t, filepath.Join(tmpDir, "companies"))
+	view := makeDefaultView("ingr")
+
+	records := []ingitdb.IRecordEntry{
+		ingitdb.NewMapRecordEntry("acme", map[string]any{"id": "acme", "name": "Acme Corp", "country": "gb"}),
+		ingitdb.NewMapRecordEntry("bbc", map[string]any{"id": "bbc", "name": "BBC", "country": "gb"}),
+	}
+
+	created, _, _, errs := buildFKViews(tmpDir, "", col, makeDefWithCountries(tmpDir), view, records, nil)
+	if len(errs) > 0 {
+		t.Fatalf("unexpected errors: %v", errs)
+	}
+	if created != 1 {
+		t.Fatalf("expected 1 file created, got %d", created)
+	}
+
+	gbPath := fkFilePath(tmpDir, "countries", "companies", "country", "gb", "ingr")
+	content, err := os.ReadFile(gbPath)
+	if err != nil {
+		t.Fatalf("gb.ingr not found: %v", err)
+	}
+	contentStr := string(content)
+	firstLine := strings.SplitN(contentStr, "\n", 2)[0]
+
+	// Header must NOT contain the FK column "country" in the column list.
+	// The header format is: "# INGR.io | {viewName}: col1, col2, ..."
+	// The viewName itself contains "country" as a path segment, so we check only
+	// the column list — the part after the last ": ".
+	colonIdx := strings.LastIndex(firstLine, ": ")
+	if colonIdx < 0 {
+		t.Fatalf("unexpected INGR header format: %s", firstLine)
+	}
+	colList := firstLine[colonIdx+2:]
+	if strings.Contains(colList, "country") {
+		t.Errorf("FK column 'country' should be excluded from column list, got: %s", colList)
+	}
+
+	// Header must still contain the non-FK columns.
+	if !strings.Contains(firstLine, "$ID") {
+		t.Errorf("INGR header missing $ID: %s", firstLine)
+	}
+	if !strings.Contains(firstLine, "name") {
+		t.Errorf("INGR header missing 'name': %s", firstLine)
+	}
+}
+
+
 // abort processing of other FK values; other files are still written and the error is returned.
 func TestBuildFKViews_ErrorAccumulation(t *testing.T) {
 	t.Parallel()
